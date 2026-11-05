@@ -12,7 +12,10 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(useMaterial3: true, colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue, brightness: Brightness.dark)),
+      theme: ThemeData(
+          useMaterial3: true,
+          colorScheme: ColorScheme.fromSeed(
+              seedColor: Colors.blue, brightness: Brightness.dark)),
       home: const ChatScreen(),
     );
   }
@@ -53,7 +56,6 @@ class _ChatScreenState extends State<ChatScreen> {
     final dir = Directory.systemTemp;
     final envFile = File('${dir.path}/env_data.zip');
 
-    // 如果你想测试解压逻辑，可以保留这行；如果有真包了，可以删掉这行
     if (await envFile.exists()) {
       platform.invokeMethod('startExtract', {'path': envFile.path});
       return;
@@ -95,8 +97,8 @@ class _ChatScreenState extends State<ChatScreen> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // 🚨 你的落锤回归！
-                  const SizedBox(
+                  // 🚨 落锤图标（已去掉引发报错的 const）
+                  SizedBox(
                     width: 160.0,
                     height: 160.0,
                     child: FittedBox(
@@ -110,12 +112,14 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                   const SizedBox(height: 50.0),
                   SizedBox(
-                    width: 200.0, height: 200.0,
+                    width: 200.0,
+                    height: 200.0,
                     child: Stack(
                       alignment: Alignment.center,
                       children: [
                         SizedBox(
-                          width: 160.0, height: 160.0,
+                          width: 160.0,
+                          height: 160.0,
                           child: CircularProgressIndicator(
                             value: _progress > 0 ? _progress : null,
                             strokeWidth: 8.0,
@@ -123,28 +127,39 @@ class _ChatScreenState extends State<ChatScreen> {
                             color: Colors.blueAccent,
                           ),
                         ),
-                        Text("${(_progress * 100).toStringAsFixed(1)}%", style: const TextStyle(fontSize: 36.0, fontWeight: FontWeight.bold, color: Colors.white)),
+                        Text("${(_progress * 100).toStringAsFixed(1)}%",
+                            style: const TextStyle(
+                                fontSize: 36.0,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white)),
                       ],
                     ),
                   ),
                   const SizedBox(height: 30.0),
-                  Text(_status, style: const TextStyle(fontSize: 16.0, color: Colors.grey)),
+                  Text(_status,
+                      style: const TextStyle(fontSize: 16.0, color: Colors.grey)),
                 ],
               ),
             )
           : Column(
               children: [
-                Expanded(
-                  child: Center(child: Text("Node 引擎已就绪！可以开始对话。", style: TextStyle(fontSize: 20, color: Colors.blueAccent))),
+                const Expanded(
+                  child: Center(
+                      child: Text("Node 引擎已就绪！可以开始对话。",
+                          style: TextStyle(
+                              fontSize: 20, color: Colors.blueAccent))),
                 ),
                 Padding(
                   padding: const EdgeInsets.all(8.0),
                   child: TextField(
                     controller: _controller,
                     decoration: InputDecoration(
-                      hintText: "输入指令...", 
-                      filled: true, fillColor: Colors.grey[900],
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(24.0), borderSide: BorderSide.none),
+                      hintText: "输入指令...",
+                      filled: true,
+                      fillColor: Colors.grey[900],
+                      border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(24.0),
+                          borderSide: BorderSide.none),
                     ),
                   ),
                 ),
@@ -154,26 +169,68 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 }
 
-// 🎨 你的完美落锤代码（原汁原味）
+// 🎨 你的完美落锤代码（所有数字已转 double）
 class HammerDownPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     const double unit = 512.0;
     canvas.save();
     canvas.scale(size.width / unit, size.height / unit);
-    final white = Paint()..color = Colors.white..style = PaintingStyle.fill..isAntiAlias = true;
-    final stroke = Paint()..color = Colors.white..style = PaintingStyle.stroke..strokeWidth = 12.0..isAntiAlias = true;
+
+    final white = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.fill
+      ..isAntiAlias = true;
+    final stroke = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 12.0
+      ..isAntiAlias = true;
+
     canvas.drawCircle(const Offset(256.0, 256.0), 232.0, stroke);
-    final head = Path()..moveTo(62.0, 188.0)..lineTo(330.0, 82.0)..quadraticBezierTo(350.0, 75.0, 365.0, 94.0)..lineTo(425.0, 170.0)..lineTo(285.0, 250.0)..lineTo(115.0, 330.0)..close();
-    final notch = Path()..moveTo(62.0, 188.0)..lineTo(115.0, 330.0)..lineTo(205.0, 280.0)..quadraticBezierTo(170.0, 282.0, 145.0, 260.0)..quadraticBezierTo(125.0, 245.0, 130.0, 220.0)..quadraticBezierTo(145.0, 250.0, 185.0, 260.0)..quadraticBezierTo(155.0, 235.0, 155.0, 205.0)..quadraticBezierTo(175.0, 235.0, 220.0, 240.0)..lineTo(285.0, 250.0)..close();
+
+    final head = Path()
+      ..moveTo(62.0, 188.0)
+      ..lineTo(330.0, 82.0)
+      ..quadraticBezierTo(350.0, 75.0, 365.0, 94.0)
+      ..lineTo(425.0, 170.0)
+      ..lineTo(285.0, 250.0)
+      ..lineTo(115.0, 330.0)
+      ..close();
+
+    final notch = Path()
+      ..moveTo(62.0, 188.0)
+      ..lineTo(115.0, 330.0)
+      ..lineTo(205.0, 280.0)
+      ..quadraticBezierTo(170.0, 282.0, 145.0, 260.0)
+      ..quadraticBezierTo(125.0, 245.0, 130.0, 220.0)
+      ..quadraticBezierTo(145.0, 250.0, 185.0, 260.0)
+      ..quadraticBezierTo(155.0, 235.0, 155.0, 205.0)
+      ..quadraticBezierTo(175.0, 235.0, 220.0, 240.0)
+      ..lineTo(285.0, 250.0)
+      ..close();
+
     final headWithNotch = Path.combine(PathOperation.difference, head, notch);
-    final handle = Path()..moveTo(270.0, 242.0)..lineTo(300.0, 225.0)..lineTo(405.0, 420.0)..lineTo(365.0, 445.0)..close();
+
+    final handle = Path()
+      ..moveTo(270.0, 242.0)
+      ..lineTo(300.0, 225.0)
+      ..lineTo(405.0, 420.0)
+      ..lineTo(365.0, 445.0)
+      ..close();
+
     final hammer = Path.combine(PathOperation.union, headWithNotch, handle);
-    final holes = Path()..addOval(Rect.fromCircle(center: const Offset(250.0, 190.0), radius: 42.0))..addOval(Rect.fromCircle(center: const Offset(330.0, 150.0), radius: 20.0))..addOval(Rect.fromCircle(center: const Offset(380.0, 125.0), radius: 11.0));
+
+    final holes = Path()
+      ..addOval(Rect.fromCircle(center: const Offset(250.0, 190.0), radius: 42.0))
+      ..addOval(Rect.fromCircle(center: const Offset(330.0, 150.0), radius: 20.0))
+      ..addOval(Rect.fromCircle(center: const Offset(380.0, 125.0), radius: 11.0));
+
     final finalHammer = Path.combine(PathOperation.difference, hammer, holes);
     canvas.drawPath(finalHammer, white);
     canvas.restore();
   }
+
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
