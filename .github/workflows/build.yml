@@ -8,7 +8,7 @@ jobs:
     
     - name: Download Node and Build DSH
       run: |
-        # 🚨 核心修复：把 npm 的安装目录改到用户自己的文件夹里，避开系统权限限制
+        # 解决 npm 权限问题
         npm config set prefix ~/.npm-global
         export PATH=~/.npm-global/bin:$PATH
 
@@ -25,20 +25,20 @@ jobs:
         rm -rf /tmp/dsh_env && mkdir -p /tmp/dsh_env && cd /tmp/dsh_env
         git clone --depth 1 https://github.com/deepseek-ai/deepseek-harness.git
         cd deepseek-harness
-        
-        # 安装依赖（现在有权限了）
         npm install -g npm@11
         npm i -g pnpm@11
         pnpm i --ignore-scripts
         
-        # 3. 打补丁，绕过原生 C++ 模块报错
+        # 3. 打补丁
         T=$(find node_modules/.pnpm -type d -name "node-addon-require-builtin" | head -n 1)
         if [ -n "$T" ]; then echo "module.exports = { requireBuiltin: (id) => require(id) };" > "$T/lib/index.js"; fi
         
         # 4. 打包成 env.zip
         cd /tmp/dsh_env
         zip -1 -r -q -y env.zip deepseek-harness
-        mv /tmp/n/node env.zip /github/workspace/
+        
+        # 🚨 核心修复：用 $GITHUB_WORKSPACE 替代写死的路径
+        mv /tmp/n/node env.zip $GITHUB_WORKSPACE/
 
     - name: Upload Env Package
       uses: actions/upload-artifact@v4
