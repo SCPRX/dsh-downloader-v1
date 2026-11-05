@@ -13,15 +13,13 @@ jobs:
       run: |
         flutter create --platforms android --project-name dshapp --org com.dsh build_app
         cp main.dart build_app/lib/main.dart
+        cp pubspec.yaml build_app/pubspec.yaml
         
-        # 自动把你的图片放进资源库
+        # 把图片直接拷过去，不需要再改配置了
         mkdir -p build_app/assets
         cp logo.png build_app/assets/logo.png
         
-        # 自动修改配置文件，允许读取图片
         cd build_app
-        sed -i '/flutter:/a \  assets:\n    - assets/logo.png' pubspec.yaml
-        
         flutter pub get
         flutter build apk --release --target-platform android-arm64
     - uses: actions/upload-artifact@v4
