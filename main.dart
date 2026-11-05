@@ -63,7 +63,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
     setState(() => _status = "首次启动，正在下载核心环境...");
     try {
-      // 🚨 注意：这里目前还是测试的源码包。等咱们真正打包好环境后，换成真实的 700M 下载链接。
       String downloadUrl = 'https://github.com/deepseek-ai/deepseek-harness/archive/refs/heads/main.zip'; 
       var request = http.Request('GET', Uri.parse(downloadUrl));
       var response = await http.Client().send(request);
@@ -97,16 +96,14 @@ class _ChatScreenState extends State<ChatScreen> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // 🚨 落锤图标（已去掉引发报错的 const）
-                  SizedBox(
-                    width: 160.0,
-                    height: 160.0,
-                    child: FittedBox(
-                      fit: BoxFit.contain,
-                      child: SizedBox(
-                        width: 512.0,
-                        height: 512.0,
-                        child: CustomPaint(painter: HammerDownPainter()),
+                  // 🚨 关键修复：用 AspectRatio 锁死正方形，绝对不变形！
+                  AspectRatio(
+                    aspectRatio: 1.0,
+                    child: Container(
+                      width: 160.0, // 控制整体大小
+                      padding: const EdgeInsets.all(20.0),
+                      child: CustomPaint(
+                        painter: HammerDownPainter(),
                       ),
                     ),
                   ),
@@ -136,8 +133,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                   ),
                   const SizedBox(height: 30.0),
-                  Text(_status,
-                      style: const TextStyle(fontSize: 16.0, color: Colors.grey)),
+                  Text(_status, style: const TextStyle(fontSize: 16.0, color: Colors.grey)),
                 ],
               ),
             )
@@ -146,8 +142,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 const Expanded(
                   child: Center(
                       child: Text("Node 引擎已就绪！可以开始对话。",
-                          style: TextStyle(
-                              fontSize: 20, color: Colors.blueAccent))),
+                          style: TextStyle(fontSize: 20, color: Colors.blueAccent))),
                 ),
                 Padding(
                   padding: const EdgeInsets.all(8.0),
@@ -169,65 +164,73 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 }
 
-// 🎨 你的完美落锤代码（所有数字已转 double）
+// 🎨 完美重构：SCP 落锤标志
 class HammerDownPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     const double unit = 512.0;
     canvas.save();
+    // 保证缩放比例一致
     canvas.scale(size.width / unit, size.height / unit);
 
-    final white = Paint()
+    final whitePaint = Paint()
       ..color = Colors.white
       ..style = PaintingStyle.fill
       ..isAntiAlias = true;
-    final stroke = Paint()
+
+    final strokePaint = Paint()
       ..color = Colors.white
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 12.0
+      ..strokeWidth = 14.0
       ..isAntiAlias = true;
 
-    canvas.drawCircle(const Offset(256.0, 256.0), 232.0, stroke);
+    // 1. 画外圈
+    canvas.drawCircle(const Offset(256.0, 256.0), 235.0, strokePaint);
 
+    // 2. 画锤头主体
     final head = Path()
-      ..moveTo(62.0, 188.0)
-      ..lineTo(330.0, 82.0)
-      ..quadraticBezierTo(350.0, 75.0, 365.0, 94.0)
-      ..lineTo(425.0, 170.0)
-      ..lineTo(285.0, 250.0)
-      ..lineTo(115.0, 330.0)
+      ..moveTo(50.0, 210.0)      // 左侧鸟嘴尖端
+      ..lineTo(340.0, 70.0)      // 顶部斜边
+      ..quadraticBezierTo(410.0, 50.0, 450.0, 120.0) // 右上角圆滑过渡
+      ..lineTo(475.0, 180.0)     // 右侧边缘
+      ..lineTo(280.0, 270.0)     // 锤头右下
+      ..lineTo(100.0, 380.0)     // 锤头左下
       ..close();
 
+    // 3. 挖掉左侧的波浪形缺口
     final notch = Path()
-      ..moveTo(62.0, 188.0)
-      ..lineTo(115.0, 330.0)
-      ..lineTo(205.0, 280.0)
-      ..quadraticBezierTo(170.0, 282.0, 145.0, 260.0)
-      ..quadraticBezierTo(125.0, 245.0, 130.0, 220.0)
-      ..quadraticBezierTo(145.0, 250.0, 185.0, 260.0)
-      ..quadraticBezierTo(155.0, 235.0, 155.0, 205.0)
-      ..quadraticBezierTo(175.0, 235.0, 220.0, 240.0)
-      ..lineTo(285.0, 250.0)
+      ..moveTo(50.0, 210.0)      // 从尖端开始
+      ..lineTo(100.0, 380.0)     // 连到底部
+      ..lineTo(190.0, 330.0)     // 挖进内部
+      ..quadraticBezierTo(140.0, 310.0, 130.0, 270.0) // 第一道弧
+      ..quadraticBezierTo(170.0, 290.0, 210.0, 260.0) // 第二道弧
+      ..lineTo(280.0, 270.0)     // 回到右侧
       ..close();
 
     final headWithNotch = Path.combine(PathOperation.difference, head, notch);
 
+    // 4. 画锤柄（加粗加长）
     final handle = Path()
-      ..moveTo(270.0, 242.0)
-      ..lineTo(300.0, 225.0)
-      ..lineTo(405.0, 420.0)
-      ..lineTo(365.0, 445.0)
+      ..moveTo(260.0, 270.0)     // 柄根左
+      ..lineTo(320.0, 230.0)     // 柄根右
+      ..lineTo(440.0, 460.0)     // 柄底右
+      ..lineTo(380.0, 490.0)     // 柄底左
       ..close();
 
+    // 5. 合并锤头与锤柄
     final hammer = Path.combine(PathOperation.union, headWithNotch, handle);
 
+    // 6. 挖出三个圆孔（大、中、小）
     final holes = Path()
-      ..addOval(Rect.fromCircle(center: const Offset(250.0, 190.0), radius: 42.0))
-      ..addOval(Rect.fromCircle(center: const Offset(330.0, 150.0), radius: 20.0))
-      ..addOval(Rect.fromCircle(center: const Offset(380.0, 125.0), radius: 11.0));
+      ..addOval(Rect.fromCircle(center: const Offset(240.0, 190.0), radius: 45.0)) // 大孔
+      ..addOval(Rect.fromCircle(center: const Offset(330.0, 140.0), radius: 22.0)) // 中孔
+      ..addOval(Rect.fromCircle(center: const Offset(400.0, 100.0), radius: 10.0)); // 小孔
 
     final finalHammer = Path.combine(PathOperation.difference, hammer, holes);
-    canvas.drawPath(finalHammer, white);
+
+    // 7. 绘制最终图形
+    canvas.drawPath(finalHammer, whitePaint);
+
     canvas.restore();
   }
 
