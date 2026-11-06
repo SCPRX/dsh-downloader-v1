@@ -5,7 +5,7 @@ import 'package:flutter/services.dart';
 import 'dart:math' as math;
 
 void main() {
-  // 🚨 核心：Flutter 层强制沉浸式，状态栏直接透明消失
+  // 强制沉浸式全屏，干掉状态栏
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
@@ -103,6 +103,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   Future<void> _start() async {
     final envFile = File('${Directory.systemTemp.path}/env_data.zip');
     if (await envFile.exists()) { try { envFile.deleteSync(); } catch(e) {} }
+    
     setState(() => _status = "首次启动，正在下载核心环境(847MB)...");
     try {
       String url = 'https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/env.zip';
@@ -111,11 +112,13 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
       var contentLength = response.contentLength ?? 0;
       var received = 0;
       var sink = envFile.openWrite();
+      
       await response.stream.listen((chunk) {
         sink.add(chunk);
         received += chunk.length;
         if (contentLength > 0) setState(() => _progress = received / contentLength);
       }).asFuture();
+      
       await sink.close();
       setState(() => _status = "下载完成，正在解压(耗时较长)...");
       platform.invokeMethod('startExtract', {'path': envFile.path});
@@ -124,7 +127,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
 
   @override
   Widget build(BuildContext context) {
-    // 🚨 纯 Container 铺满，绝对没有 Scaffold 的顶栏
+    // 彻底抛弃 Scaffold，用 Container 铺满
     return Container(
       color: const Color(0xFF03060A), 
       child: !_isReady
@@ -151,7 +154,21 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                         ),
                       ),
                       const SizedBox(height: 40),
-                      Text(_status, textAlign: TextAlign.center, style: const TextStyle(fontSize: 14.0, color: Color(0xFF00FFCC), fontWeight: FontWeight.bold)),
+                      
+                      // 🚨 核心修复：彻底屏蔽系统对这段文字的拼写检查、无障碍高亮，并强制没有任何下划线
+                      ExcludeSemantics(
+                        child: Text(
+                          _status, 
+                          textAlign: TextAlign.center, 
+                          style: const TextStyle(
+                            fontSize: 14.0, 
+                            color: Color(0xFF00FFCC), 
+                            fontWeight: FontWeight.bold,
+                            decoration: TextDecoration.none, // 强制无下划线
+                            decorationColor: Colors.transparent,
+                          ),
+                        ),
+                      ),
                     ],
                   ),
                 ),
