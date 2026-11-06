@@ -38,11 +38,19 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   static const platform = MethodChannel('com.dsh.dshapp/status');
   late AnimationController _auroraController;
 
+  // 🌌 极光色板
+  final List<Color> _auroraColors = [
+    const Color(0xFF00FFCC), // 亮青
+    const Color(0xFF0088FF), // 深蓝
+    const Color(0xFFAA00FF), // 紫罗兰
+    const Color(0xFF00FFCC), // 循环
+  ];
+
   @override
   void initState() {
     super.initState();
-    // 极光波浪动画
-    _auroraController = AnimationController(vsync: this, duration: const Duration(seconds: 4))..repeat();
+    // 极光动画
+    _auroraController = AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat();
 
     platform.setMethodCallHandler((call) async {
       if (call.method == 'updateStatus') {
@@ -68,8 +76,8 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   Future<void> _start() async {
     final envFile = File('${Directory.systemTemp.path}/env_data.zip');
     if (await envFile.exists()) {
-      platform.invokeMethod('startExtract', {'path': envFile.path});
-      return;
+      // 删除旧的损坏包
+      try { envFile.deleteSync(); } catch(e) {}
     }
 
     setState(() => _status = "首次启动，正在下载核心环境(847MB)...");
@@ -117,34 +125,45 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('原生 DSH')),
-      backgroundColor: const Color(0xFF0B0F19), // 极光深空底色
+      backgroundColor: const Color(0xFF0B0F19), 
       body: !_isReady
           ? Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   
-                  // 🌌 极光波浪包裹落锤
+                  // 🌌 极光环绕落锤
                   SizedBox(
-                    width: 300.0, // 放大容器，给极光留出蔓延的空间
-                    height: 300.0,
+                    width: 240.0, 
+                    height: 240.0,
                     child: AnimatedBuilder(
                       animation: _auroraController,
                       builder: (context, child) {
-                        return CustomPaint(
-                          painter: AuroraWavePainter(
-                            animationValue: _auroraController.value,
-                            progress: _progress,
-                          ),
-                          child: Center(
-                            // 落锤放在中间，保持纯白，不染特效
-                            child: Image.asset(
-                              'assets/logo.png',
+                        return Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            // 1. 底层：纯白落锤
+                            SizedBox(
                               width: 140.0,
                               height: 140.0,
-                              fit: BoxFit.contain,
+                              child: Image.asset(
+                                'assets/logo.png',
+                                fit: BoxFit.contain,
+                                color: Colors.white, // 强制染白，防止变黑
+                                colorBlendMode: BlendMode.srcIn,
+                              ),
                             ),
-                          ),
+                            
+                            // 2. 外层：极光进度圈
+                            CustomPaint(
+                              size: const Size(220.0, 220.0),
+                              painter: AuroraRingPainter(
+                                progress: _progress,
+                                rotation: _auroraController.value,
+                                colors: _auroraColors,
+                              ),
+                            ),
+                          ],
                         );
                       },
                     ),
@@ -218,88 +237,66 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   }
 }
 
-// 🎨 真正的极光波浪画笔 (Aurora Wave Painter)
-class AuroraWavePainter extends CustomPainter {
-  final double animationValue;
+// 🎨 极光光带画笔 (光环版)
+class AuroraRingPainter extends CustomPainter {
   final double progress;
+  final double rotation;
+  final List<Color> colors;
 
-  AuroraWavePainter({required this.animationValue, required this.progress});
+  AuroraRingPainter({
+    required this.progress,
+    required this.rotation,
+    required this.colors,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
     final radius = size.width / 2;
 
-    // 极光色板：绿色、青色、蓝紫色
-    final auroraColors = [
-      const Color(0xFF00FF88), // 极光绿
-      const Color(0xFF00CCFF), // 极光青
-      const Color(0xFF6600FF), // 极光紫
-    ];
-
-    // 1. 画底部的暗色进度环
+    // 底部的暗色轨道
     final trackPaint = Paint()
       ..color = Colors.white10
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 4.0
+      ..strokeWidth = 8.0
       ..isAntiAlias = true;
-    canvas.drawCircle(center, radius - 20, trackPaint);
+    canvas.drawCircle(center, radius - 4, trackPaint);
 
-    // 2. 画进度弧线 (跟随进度)
-    final progressPaint = Paint()
-      ..color = auroraColors[0].withOpacity(0.8)
+    // 旋转的极光渐变
+    final gradient = SweepGradient(
+      colors: colors,
+      stops: const [0.0, 0.3, 0.7, 1.0],
+      transform: GradientRotation(rotation * 2 * math.pi),
+    );
+
+    // 核心极光光束（带高斯模糊，产生弥散发光感）
+    final glowPaint = Paint()
+      ..shader = gradient.createShader(Rect.fromCircle(center: center, radius: radius))
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 16.0
+      ..strokeCap = StrokeCap.round
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8.0);
+
+    // 锐利的极光核心（高亮）
+    final corePaint = Paint()
+      ..shader = gradient.createShader(Rect.fromCircle(center: center, radius: radius))
       ..style = PaintingStyle.stroke
       ..strokeWidth = 6.0
-      ..strokeCap = StrokeCap.round
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4.0); // 进度条也加点发光
+      ..strokeCap = StrokeCap.round;
 
-    if (progress > 0) {
-      canvas.drawArc(
-        Rect.fromCircle(center: center, radius: radius - 20),
-        -math.pi / 2,
-        progress * 2 * math.pi,
-        false,
-        progressPaint,
-      );
+    if (progress == 0) {
+      // 如果还没开始下载，画一段旋转的光带，表示正在准备
+      canvas.drawArc(Rect.fromCircle(center: center, radius: radius - 4), 0, 1.5, false, glowPaint);
+      canvas.drawArc(Rect.fromCircle(center: center, radius: radius - 4), 0, 1.5, false, corePaint);
+    } else {
+      // 如果有进度，画出对应的光带
+      canvas.drawArc(Rect.fromCircle(center: center, radius: radius - 4), -math.pi / 2, progress * 2 * math.pi, false, glowPaint);
+      canvas.drawArc(Rect.fromCircle(center: center, radius: radius - 4), -math.pi / 2, progress * 2 * math.pi, false, corePaint);
     }
-
-    // 3. 画流动的极光波浪
-    canvas.save();
-    // 限制在圆形区域内，防止波浪溢出
-    canvas.clipPath(Path()..addOval(Rect.fromCircle(center: center, radius: radius - 10)));
-
-    // 画三层不同速度、不同颜色的波浪
-    for (int i = 0; i < 3; i++) {
-      final wavePaint = Paint()
-        ..color = auroraColors[i].withOpacity(0.3 + (progress * 0.4)) // 进度越高，极光越亮
-        ..style = PaintingStyle.fill
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 20.0); // 极光的高斯模糊
-
-      final path = Path();
-      // 每层波浪的速度和相位偏移不同
-      final speed = (animationValue * 2 * math.pi) + (i * math.pi / 2);
-      final amplitude = 20.0 + (i * 10);
-      final waveHeight = center.dy + (i * 20) - 30;
-
-      path.moveTo(0, size.height);
-      path.lineTo(0, waveHeight);
-
-      // 用正弦波画曲线
-      for (double x = 0; x <= size.width; x += 10) {
-        final y = waveHeight + amplitude * math.sin((x / size.width * 2 * math.pi) + speed);
-        path.lineTo(x, y);
-      }
-
-      path.lineTo(size.width, size.height);
-      path.close();
-
-      canvas.drawPath(path, wavePaint);
-    }
-    canvas.restore();
   }
 
   @override
-  bool shouldRepaint(covariant AuroraWavePainter oldDelegate) {
-    return oldDelegate.animationValue != animationValue || oldDelegate.progress != progress;
+  bool shouldRepaint(covariant AuroraRingPainter oldDelegate) {
+    return oldDelegate.progress != progress || oldDelegate.rotation != rotation;
   }
 }
