@@ -16,7 +16,7 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
           useMaterial3: true,
           colorScheme: ColorScheme.fromSeed(
-              seedColor: const Color(0xFF9C27B0), brightness: Brightness.dark)),
+              seedColor: const Color(0xFF00FFCC), brightness: Brightness.dark)),
       home: const ChatScreen(),
     );
   }
@@ -36,12 +36,20 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   double _progress = 0.0;
   bool _isReady = false;
   static const platform = MethodChannel('com.dsh.dshapp/status');
-  late AnimationController _enchantController;
+  late AnimationController _auroraController;
+
+  // 🌌 极光渐变色：青绿 -> 湛蓝 -> 幻紫
+  final List<Color> _auroraColors = [
+    const Color(0xFF00FFCC), // 极光青
+    const Color(0xFF00BFFF), // 深天蓝
+    const Color(0xFF8A2BE2), // 蓝紫
+    const Color(0xFF00FFCC), // 闭环
+  ];
 
   @override
   void initState() {
     super.initState();
-    _enchantController = AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat();
+    _auroraController = AnimationController(vsync: this, duration: const Duration(seconds: 3))..repeat();
 
     platform.setMethodCallHandler((call) async {
       if (call.method == 'updateStatus') {
@@ -60,7 +68,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
 
   @override
   void dispose() {
-    _enchantController.dispose();
+    _auroraController.dispose();
     super.dispose();
   }
 
@@ -122,59 +130,58 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   
-                  // 🚨 去掉数字，让圈和图片完美贴合
+                  // 🌌 极光魔法阵
                   SizedBox(
-                    width: 210.0,
-                    height: 210.0,
-                    child: Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        // 1. 底层：落锤图片放大到 210
-                        SizedBox(
-                          width: 210.0,
-                          height: 210.0,
-                          child: AnimatedBuilder(
-                            animation: _enchantController,
-                            builder: (context, child) {
-                              return ShaderMask(
+                    width: 240.0,
+                    height: 240.0,
+                    child: AnimatedBuilder(
+                      animation: _auroraController,
+                      builder: (context, child) {
+                        return Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            // 1. 底层：极光落锤
+                            SizedBox(
+                              width: 180.0,
+                              height: 180.0,
+                              child: ShaderMask(
                                 shaderCallback: (Rect bounds) {
                                   return SweepGradient(
-                                    colors: const [
-                                      Color(0xFF9C27B0),
-                                      Color(0xFFE040FB),
-                                      Color(0xFFFFFFFF),
-                                      Color(0xFF651FFF),
-                                      Color(0xFF9C27B0),
-                                    ],
-                                    stops: const [0.0, 0.3, 0.5, 0.7, 1.0],
-                                    transform: GradientRotation(_enchantController.value * 2 * math.pi),
+                                    colors: _auroraColors,
+                                    stops: const [0.0, 0.4, 0.7, 1.0],
+                                    transform: GradientRotation(_auroraController.value * 2 * math.pi),
                                   ).createShader(bounds);
                                 },
                                 blendMode: BlendMode.srcIn,
                                 child: Image.asset('assets/logo.png', fit: BoxFit.contain),
-                              );
-                            },
-                          ),
-                        ),
-                        
-                        // 2. 外层：进度圈（尺寸调到和图片一样大，加粗），去掉了背景轨道
-                        SizedBox(
-                          width: 208.0, // 稍微比图片小2像素，刚好卡在内侧
-                          height: 208.0,
-                          child: CircularProgressIndicator(
-                            value: _progress > 0 ? _progress : null,
-                            strokeWidth: 8.0, // 加粗，看起来更有力量
-                            backgroundColor: Colors.transparent, // 轨道透明
-                            color: const Color(0xFFFFFFFF), // 进度条用纯白色，或者用 0xFFE040FB 亮紫
-                          ),
-                        ),
-                      ],
+                              ),
+                            ),
+                            
+                            // 2. 顶层：极光进度圈
+                            CustomPaint(
+                              size: const Size(220.0, 220.0),
+                              painter: AuroraProgressPainter(
+                                progress: _progress,
+                                colors: _auroraColors,
+                                rotation: _auroraController.value,
+                              ),
+                            ),
+                          ],
+                        );
+                      },
                     ),
                   ),
                   
-                  const SizedBox(height: 30.0),
-                  // 这里只保留底部的状态文字提示
-                  Text(_status, style: const TextStyle(fontSize: 16.0, color: Colors.orangeAccent)),
+                  const SizedBox(height: 40.0),
+                  // 底部状态文字
+                  Text(
+                    _status, 
+                    style: const TextStyle(
+                      fontSize: 16.0, 
+                      color: Color(0xFF00FFCC), // 文字也换成极光青
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ],
               ),
             )
@@ -219,7 +226,11 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                           ),
                         ),
                         const SizedBox(width: 8),
-                        IconButton.filled(icon: const Icon(Icons.send), onPressed: _sendMessage),
+                        IconButton.filled(
+                          icon: const Icon(Icons.send), 
+                          onPressed: _sendMessage,
+                          style: IconButton.styleFrom(backgroundColor: const Color(0xFF8A2BE2)), // 发送按钮也改色
+                        ),
                       ],
                     ),
                   ),
@@ -227,5 +238,72 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
               ],
             ),
     );
+  }
+}
+
+// 🎨 极光进度条画笔
+class AuroraProgressPainter extends CustomPainter {
+  final double progress;
+  final List<Color> colors;
+  final double rotation;
+
+  AuroraProgressPainter({
+    required this.progress,
+    required this.colors,
+    required this.rotation,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = size.width / 2;
+    
+    // 底部的暗色轨道
+    final trackPaint = Paint()
+      ..color = Colors.white12
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 10.0
+      ..isAntiAlias = true;
+    canvas.drawCircle(center, radius - 5, trackPaint);
+
+    // 进度弧线的极光渐变
+    final rect = Rect.fromCircle(center: center, radius: radius);
+    final gradient = SweepGradient(
+      colors: colors,
+      stops: const [0.0, 0.4, 0.7, 1.0],
+      transform: GradientRotation(rotation * 2 * math.pi), // 让颜色跟着转
+    );
+
+    final progressPaint = Paint()
+      ..shader = gradient.createShader(rect)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 12.0
+      ..strokeCap = StrokeCap.round
+      ..isAntiAlias = true;
+
+    // 如果还没开始下载，画一个旋转的极光弧线（加载动画）
+    if (progress == 0) {
+      canvas.drawArc(
+        Rect.fromCircle(center: center, radius: radius - 5),
+        rotation * 2 * math.pi, 
+        1.5, // 弧长
+        false, 
+        progressPaint
+      );
+    } else {
+      // 如果有进度，画出对应比例的圆弧
+      canvas.drawArc(
+        Rect.fromCircle(center: center, radius: radius - 5),
+        -math.pi / 2, // 从正上方开始
+        progress * 2 * math.pi, // 进度对应的角度
+        false, 
+        progressPaint
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant AuroraProgressPainter oldDelegate) {
+    return oldDelegate.progress != progress || oldDelegate.rotation != rotation;
   }
 }
