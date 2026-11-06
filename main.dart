@@ -13,7 +13,10 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(useMaterial3: true, colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF9C27B0), brightness: Brightness.dark)),
+      theme: ThemeData(
+          useMaterial3: true,
+          colorScheme: ColorScheme.fromSeed(
+              seedColor: const Color(0xFF9C27B0), brightness: Brightness.dark)),
       home: const ChatScreen(),
     );
   }
@@ -31,7 +34,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   
   String _status = "正在检查环境...";
   double _progress = 0.0;
-  bool _isReady = false; // 🚨 必须为 false，这样才能先下载
+  bool _isReady = false;
   static const platform = MethodChannel('com.dsh.dshapp/status');
   late AnimationController _enchantController;
 
@@ -43,7 +46,6 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     platform.setMethodCallHandler((call) async {
       if (call.method == 'updateStatus') {
         setState(() => _status = call.arguments);
-        // 如果底层传来了 Node 的日志，直接打到聊天列表里
         if ((call.arguments as String).startsWith("底层:")) {
           setState(() => _messages.add({"text": call.arguments, "isUser": false}));
         }
@@ -71,7 +73,6 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
 
     setState(() => _status = "首次启动，正在下载核心环境(847MB)...");
     try {
-      // 🚨 确保这里是你的真实 v1 链接
       String url = 'https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/env.zip';
       var request = http.Request('GET', Uri.parse(url));
       var response = await http.Client().send(request);
@@ -120,41 +121,66 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // 🚨 紫色附魔落锤特效
+                  
+                  // 🚨 你指定的魔法阵充能版（原封不动）
                   SizedBox(
-                    width: 180.0, height: 180.0,
-                    child: AnimatedBuilder(
-                      animation: _enchantController,
-                      builder: (context, child) => ShaderMask(
-                        shaderCallback: (Rect bounds) => SweepGradient(
-                          colors: const [Color(0xFF9C27B0), Color(0xFFE040FB), Color(0xFFFFFFFF), Color(0xFF651FFF), Color(0xFF9C27B0)],
-                          stops: const [0.0, 0.3, 0.5, 0.7, 1.0],
-                          transform: GradientRotation(_enchantController.value * 2 * math.pi),
-                        ).createShader(bounds),
-                        blendMode: BlendMode.srcIn,
-                        child: Image.asset('assets/logo.png', fit: BoxFit.contain),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 50.0),
-                  SizedBox(
-                    width: 200.0, height: 200.0,
+                    width: 220.0,
+                    height: 220.0,
                     child: Stack(
                       alignment: Alignment.center,
                       children: [
+                        // 1. 底层：带附魔特效的落锤图片
                         SizedBox(
-                          width: 160.0, height: 160.0,
-                          child: CircularProgressIndicator(
-                            value: _progress > 0 ? _progress : null,
-                            strokeWidth: 8.0,
-                            backgroundColor: Colors.white12,
-                            color: const Color(0xFF9C27B0),
+                          width: 180.0,
+                          height: 180.0,
+                          child: AnimatedBuilder(
+                            animation: _enchantController,
+                            builder: (context, child) {
+                              return ShaderMask(
+                                shaderCallback: (Rect bounds) {
+                                  return SweepGradient(
+                                    colors: const [
+                                      Color(0xFF9C27B0),
+                                      Color(0xFFE040FB),
+                                      Color(0xFFFFFFFF),
+                                      Color(0xFF651FFF),
+                                      Color(0xFF9C27B0),
+                                    ],
+                                    stops: const [0.0, 0.3, 0.5, 0.7, 1.0],
+                                    transform: GradientRotation(_enchantController.value * 2 * math.pi),
+                                  ).createShader(bounds);
+                                },
+                                blendMode: BlendMode.srcIn,
+                                child: Image.asset('assets/logo.png', fit: BoxFit.contain),
+                              );
+                            },
                           ),
                         ),
-                        Text("${(_progress * 100).toStringAsFixed(1)}%", style: const TextStyle(fontSize: 36.0, fontWeight: FontWeight.bold, color: Colors.white)),
+                        
+                        // 2. 外层：进度圈
+                        SizedBox(
+                          width: 210.0,
+                          height: 210.0,
+                          child: CircularProgressIndicator(
+                            value: _progress > 0 ? _progress : null,
+                            strokeWidth: 6.0,
+                            backgroundColor: Colors.white12,
+                            color: const Color(0xFFE040FB),
+                          ),
+                        ),
+                        
+                        // 3. 中心：进度数字
+                        Text(
+                          "${(_progress * 100).toStringAsFixed(1)}%",
+                          style: const TextStyle(
+                              fontSize: 32.0,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white),
+                        ),
                       ],
                     ),
                   ),
+                  
                   const SizedBox(height: 30.0),
                   Text(_status, style: const TextStyle(fontSize: 16.0, color: Colors.orangeAccent)),
                 ],
@@ -177,7 +203,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                             color: msg["isUser"] ? Colors.blue[700] : Colors.grey[800],
                             borderRadius: BorderRadius.circular(12),
                           ),
-                          child: Text(msg["text"], style: const TextStyle(color: Colors.white, fontSize: 12)),
+                          child: Text(msg["text"], style: const TextStyle(color: Colors.white, fontSize: 14)),
                         ),
                       );
                     },
