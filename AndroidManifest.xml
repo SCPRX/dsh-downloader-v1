@@ -1,9 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    
+    <!-- 保留 label，这样你手机桌面上会有“原生DSH”的名字 -->
     <application android:label="原生DSH" android:name="${applicationName}" android:usesCleartextTraffic="true" android:largeHeap="true">
         <meta-data android:name="flutterEmbedding" android:value="2" />
-        <activity android:name=".MainActivity" android:exported="true">
+        
+        <!-- 🚨 关键：加入 android:theme="@style/LaunchTheme"，隐藏默认标题栏 -->
+        <activity android:name=".MainActivity" android:exported="true" android:theme="@style/LaunchTheme">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
