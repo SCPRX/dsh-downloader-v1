@@ -4,7 +4,11 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'dart:math' as math;
 
-void main() => runApp(const MyApp());
+void main() {
+  // 🚨 强制全屏沉浸，隐藏顶部状态栏和导航栏
+  SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+  runApp(const MyApp());
+}
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -37,22 +41,22 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   final double logoSize = 160.0;
   final math.Random _random = math.Random();
   
-  // 粒子系统列表
   List<StarParticle> _stars = [];
   List<CloudParticle> _clouds = [];
 
   @override
   void initState() {
     super.initState();
-    _bgController = AnimationController(vsync: this, duration: const Duration(milliseconds: 16))..repeat(); // 约60FPS
+    // 约60FPS的刷新率
+    _bgController = AnimationController(vsync: this, duration: const Duration(milliseconds: 16))..repeat();
     _bgController.addListener(_updateParticles);
     
-    // 初始化云层
+    // 初始化原生云团
     for (int i = 0; i < 4; i++) {
       _clouds.add(_spawnCloud());
     }
     // 初始化星星
-    for (int i = 0; i < 80; i++) {
+    for (int i = 0; i < 60; i++) {
       _stars.add(_spawnStar());
     }
 
@@ -65,16 +69,13 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   }
 
   CloudParticle _spawnCloud() {
-    // 随机从屏幕四周外缘生成
-    bool fromLeft = _random.nextBool();
-    bool fromTop = _random.nextBool();
+    // 🚨 原生云：从左右两侧随机飘入，用灰白色
     return CloudParticle(
-      x: fromLeft ? -0.5 : 1.5, // 从左边外或右边外进来
-      y: fromTop ? _random.nextDouble() : _random.nextDouble(),
-      radius: 0.2 + _random.nextDouble() * 0.3, // 半径占屏幕宽度比例
-      opacity: 0.1 + _random.nextDouble() * 0.15, // 云层透明度 0.1~0.25
-      vx: fromLeft ? (0.0002 + _random.nextDouble() * 0.0005) : -(0.0002 + _random.nextDouble() * 0.0005), // 缓慢横移
-      vy: (fromTop ? -1 : 1) * (0.0001 + _random.nextDouble() * 0.0002), // 缓慢纵移
+      x: _random.nextBool() ? -0.6 : 1.6, 
+      y: _random.nextDouble() * 0.8 + 0.1, 
+      radius: 0.25 + _random.nextDouble() * 0.2, // 云团大小
+      opacity: 0.15 + _random.nextDouble() * 0.15, // 云团厚度 (透明度)
+      vx: (_random.nextBool() ? 1 : -1) * (0.0005 + _random.nextDouble() * 0.0005), // 飘动速度
     );
   }
 
@@ -82,34 +83,31 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     return StarParticle(
       x: _random.nextDouble(),
       y: _random.nextDouble(),
-      radius: 0.5 + _random.nextDouble() * 1.5,
-      maxLife: 100 + _random.nextDouble() * 200, // 寿命
+      radius: 0.5 + _random.nextDouble() * 1.2,
+      maxLife: 100 + _random.nextDouble() * 200,
       life: 0,
-      twinkleSpeed: 0.02 + _random.nextDouble() * 0.05,
     );
   }
 
   void _updateParticles() {
     if (!mounted) return;
     setState(() {
-      // 更新星星
+      // 星星生灭
       for (int i = _stars.length - 1; i >= 0; i--) {
         var star = _stars[i];
         star.life += 1;
-        // 如果星星寿命到了，重置它或者移除并生成新的
         if (star.life > star.maxLife) {
-          _stars[i] = _spawnStar(); // 随机重生
+          _stars[i] = _spawnStar();
         }
       }
 
-      // 更新云层
+      // 云团飘动
       for (int i = _clouds.length - 1; i >= 0; i--) {
         var cloud = _clouds[i];
         cloud.x += cloud.vx;
-        cloud.y += cloud.vy;
         
-        // 如果云完全飘出屏幕外，就回收并随机生成新的
-        if (cloud.x < -0.8 || cloud.x > 1.8 || cloud.y < -0.8 || cloud.y > 1.8) {
+        // 飘出屏幕后重新生成
+        if (cloud.x < -1.0 || cloud.x > 2.0) {
           _clouds[i] = _spawnCloud();
         }
       }
@@ -153,19 +151,20 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
 
   @override
   Widget build(BuildContext context) {
+    // 🚨 注意：这里没有任何 AppBar，纯全屏
     return Scaffold(
-      backgroundColor: const Color(0xFF02050A), 
+      backgroundColor: const Color(0xFF03060A), // 深邃夜空
       body: !_isReady
           ? Stack(
               children: [
-                // 1. 动态星空云背景
+                // 1. 动态星空与原生云
                 Positioned.fill(
                   child: CustomPaint(
                     painter: StarryCloudPainter(_clouds, _stars),
                   ),
                 ),
 
-                // 2. 中心：落锤与进度
+                // 2. 中心落锤
                 Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -176,19 +175,6 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                         child: Stack(
                           alignment: Alignment.center,
                           children: [
-                            // 落锤本体 (加了个淡淡的光晕使其立体)
-                            Container(
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: const Color(0xFF00FFCC).withOpacity(0.1),
-                                    blurRadius: 40,
-                                    spreadRadius: 5,
-                                  )
-                                ],
-                              ),
-                            ),
                             Image.asset(
                               'assets/logo.png',
                               width: logoSize,
@@ -197,7 +183,6 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                               color: Colors.white,
                               colorBlendMode: BlendMode.srcIn,
                             ),
-                            // 进度圈
                             SizedBox(
                               width: logoSize,
                               height: logoSize,
@@ -215,16 +200,13 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                       
                       const SizedBox(height: 40),
                       
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 20),
-                        child: Text(
-                          _status,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            fontSize: 14.0, 
-                            color: Color(0xFF00FFCC),
-                            fontWeight: FontWeight.bold,
-                          ),
+                      Text(
+                        _status,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 14.0, 
+                          color: Color(0xFF00FFCC),
+                          fontWeight: FontWeight.bold,
                         ),
                       ),
                     ],
@@ -237,25 +219,19 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   }
 }
 
-// 🌟 星星粒子
 class StarParticle {
-  double x, y, radius, maxLife, life, twinkleSpeed;
-  StarParticle({
-    required this.x, required this.y, required this.radius,
-    required this.maxLife, required this.life, required this.twinkleSpeed,
-  });
+  double x, y, radius, maxLife, life;
+  StarParticle({required this.x, required this.y, required this.radius, required this.maxLife, required this.life});
 }
 
-// ☁️ 云层粒子
 class CloudParticle {
-  double x, y, radius, opacity, vx, vy;
+  double x, y, radius, opacity, vx;
   CloudParticle({
     required this.x, required this.y, required this.radius,
-    required this.opacity, required this.vx, required this.vy,
+    required this.opacity, required this.vx,
   });
 }
 
-// 🎨 画笔：星星与云
 class StarryCloudPainter extends CustomPainter {
   final List<CloudParticle> clouds;
   final List<StarParticle> stars;
@@ -264,39 +240,42 @@ class StarryCloudPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // 1. 画云层 (纯白高斯模糊)
+    // 🌌 1. 绘制原生云层
     final cloudPaint = Paint()
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 60.0); // 极度模糊
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 50.0); // 云的高斯模糊
 
     for (var cloud in clouds) {
-      final cloudOffset = Offset(cloud.x * size.width, cloud.y * size.height);
-      final cloudRect = Rect.fromCircle(center: cloudOffset, radius: cloud.radius * size.width);
+      final centerOffset = Offset(cloud.x * size.width, cloud.y * size.height);
+      final baseRadius = cloud.radius * size.width;
+
+      // 🚨 核心：用 3 个大小不一的灰白模糊圆拼成一个云团，这样看起来才像自然界的云，有厚度和起伏
+      // 颜色使用半透明灰白，而不是纯白
+      cloudPaint.color = Colors.grey.withOpacity(cloud.opacity);
       
-      // 渐变让边缘柔和
-      cloudPaint.shader = RadialGradient(
-        colors: [Colors.white.withOpacity(cloud.opacity), Colors.transparent],
-      ).createShader(cloudRect);
+      // 云团主体
+      canvas.drawCircle(centerOffset, baseRadius, cloudPaint);
       
-      canvas.drawCircle(cloudOffset, cloud.radius * size.width, cloudPaint);
+      // 左侧凸起
+      canvas.drawCircle(
+        Offset(centerOffset.dx - baseRadius * 0.6, centerOffset.dy + baseRadius * 0.1), 
+        baseRadius * 0.7, 
+        cloudPaint
+      );
+      
+      // 右侧凸起
+      canvas.drawCircle(
+        Offset(centerOffset.dx + baseRadius * 0.7, centerOffset.dy - baseRadius * 0.1), 
+        baseRadius * 0.8, 
+        cloudPaint
+      );
     }
 
-    // 2. 画星星 (随机生灭)
+    // ✨ 2. 绘制星星
     final starPaint = Paint()..style = PaintingStyle.fill;
-    
     for (var star in stars) {
-      // 计算生命周期内的透明度 (正弦波：亮起 -> 变暗 -> 消失)
       double lifeProgress = star.life / star.maxLife;
-      // 如果是生命周期的前 20% 和 后 20%，让它淡入淡出
-      double opacity = math.sin(lifeProgress * math.pi);
+      double opacity = math.sin(lifeProgress * math.pi); // 生命周期透明度
       
-      // 如果过大，加点光晕
-      if (star.radius > 1.5) {
-        final glowPaint = Paint()
-          ..color = Colors.white.withOpacity(opacity * 0.5)
-          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3.0);
-        canvas.drawCircle(Offset(star.x * size.width, star.y * size.height), star.radius * 2, glowPaint);
-      }
-
       starPaint.color = Colors.white.withOpacity(opacity);
       canvas.drawCircle(Offset(star.x * size.width, star.y * size.height), star.radius, starPaint);
     }
