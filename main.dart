@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/services.dart';
 import 'dart:math' as math;
 import 'dart:async';
+import 'dart:ui' as ui;
 
 void main() => runApp(const MyApp());
 
@@ -43,6 +43,9 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   List<RainDrop> _raindrops = [];
   List<Splash> _splashes = [];
 
+  // 🚨 统一尺寸配置：想放大缩小直接改这一个数就行
+  final double logoSize = 160.0; 
+
   @override
   void initState() {
     super.initState();
@@ -62,16 +65,16 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   }
 
   void _initRain() {
-    for (int i = 0; i < 100; i++) {
+    for (int i = 0; i < 80; i++) { 
       int layer = _random.nextInt(3);
       _raindrops.add(RainDrop(
         x: _random.nextDouble(),
         y: _random.nextDouble(),
-        speed: layer == 2 ? 2.5 + _random.nextDouble() : (layer == 1 ? 1.5 : 0.8),
-        length: layer == 2 ? 40.0 : (layer == 1 ? 20.0 : 10.0),
-        thickness: layer == 2 ? 2.0 : (layer == 1 ? 1.0 : 0.5),
-        opacity: layer == 2 ? 0.6 : (layer == 1 ? 0.3 : 0.1),
-        windOffset: -0.2,
+        speed: layer == 2 ? 1.5 + _random.nextDouble() : (layer == 1 ? 0.8 : 0.4),
+        length: layer == 2 ? 30.0 : (layer == 1 ? 15.0 : 8.0),
+        thickness: layer == 2 ? 1.5 : (layer == 1 ? 1.0 : 0.5),
+        opacity: layer == 2 ? 0.4 : (layer == 1 ? 0.2 : 0.1),
+        windOffset: -0.15,
       ));
     }
   }
@@ -80,11 +83,12 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     if (!mounted) return;
     setState(() {
       for (var drop in _raindrops) {
-        drop.y += drop.speed * 0.02;
-        drop.x += drop.windOffset * 0.02;
+        drop.y += drop.speed * 0.01;
+        drop.x += drop.windOffset * 0.01;
+        
         if (drop.y > 1.0 || drop.x < 0) {
-          if (_splashes.length < 30 && drop.speed > 1.5) {
-            _splashes.add(Splash(x: drop.x, y: 0.95));
+          if (_splashes.length < 10 && drop.thickness >= 1.0) {
+            _splashes.add(Splash(x: drop.x, y: 0.92));
           }
           drop.y = 0;
           drop.x = _random.nextDouble() + 0.2;
@@ -92,13 +96,13 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
       }
       _splashes.removeWhere((splash) => splash.life <= 0);
       for (var splash in _splashes) {
-        splash.life -= 0.05;
+        splash.life -= 0.04; 
       }
     });
   }
 
   void _startLightningLoop() {
-    int randomDelay = 1500 + _random.nextInt(4000);
+    int randomDelay = 3000 + _random.nextInt(4000); 
     _lightningTimer = Timer(Duration(milliseconds: randomDelay), () {
       if (mounted) {
         setState(() => _isLightningStriking = true);
@@ -108,7 +112,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
             Future.delayed(const Duration(milliseconds: 50), () {
               if (mounted) {
                 setState(() => _isLightningStriking = true);
-                Future.delayed(const Duration(milliseconds: 100), () {
+                Future.delayed(const Duration(milliseconds: 120), () {
                   if (mounted) {
                     setState(() => _isLightningStriking = false);
                     _startLightningLoop();
@@ -177,52 +181,61 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                   ),
                 ),
 
-                // 2. 中层：落锤、倒影与进度圈 (剥离出独立UI，防止冲突)
+                // 2. 中层：落锤、倒影与进度圈
                 Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          // 真实的落锤图片 (雷击时爆亮)
-                          Image.asset(
-                            'assets/logo.png',
-                            width: 140.0,
-                            height: 140.0,
-                            fit: BoxFit.contain,
-                            color: _isLightningStriking ? Colors.white : Colors.white70,
-                            colorBlendMode: BlendMode.srcIn,
-                          ),
-                          // 进度圈
-                          SizedBox(
-                            width: 200.0,
-                            height: 200.0,
-                            child: CircularProgressIndicator(
-                              value: _progress > 0 ? _progress : null,
-                              strokeWidth: 4.0,
-                              backgroundColor: Colors.white12,
-                              color: const Color(0xFF00FFCC),
+                      // 🚨 核心修复：图片和进度圈用一个完全相同的 SizedBox 包裹
+                      SizedBox(
+                        width: logoSize,
+                        height: logoSize,
+                        child: Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            // 落锤图片，铺满整个正方形
+                            Image.asset(
+                              'assets/logo.png',
+                              width: logoSize,
+                              height: logoSize,
+                              fit: BoxFit.contain,
+                              color: _isLightningStriking ? Colors.white : Colors.white70,
+                              colorBlendMode: BlendMode.srcIn,
                             ),
-                          ),
-                        ],
+                            // 进度圈，也用相同的大小，并让描边居中对齐
+                            SizedBox(
+                              width: logoSize,
+                              height: logoSize,
+                              child: CircularProgressIndicator(
+                                value: _progress > 0 ? _progress : null,
+                                strokeWidth: 3.0, // 稍微加粗一点
+                                backgroundColor: Colors.transparent, // 去掉底色轨道
+                                color: const Color(0xFF00FFCC),
+                                strokeAlign: CircularProgressIndicator.strokeAlignCenter, // 让线居中压在图片边缘
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                       
-                      // 水面倒影 (使用 Transform 翻转，透明度递减)
+                      // 倒影
                       Transform(
                         transform: Matrix4.identity()
-                          ..scale(1.0, -0.6) // Y轴翻转并压缩
-                          ..translate(0.0, -100.0), // 调整倒影位置
+                          ..scale(1.0, -0.5) 
+                          ..translate(0.0, -logoSize * 0.8), // 根据尺寸动态调整位移
                         alignment: Alignment.topCenter,
-                        child: Opacity(
-                          opacity: 0.15, // 倒影半透明
-                          child: Image.asset(
-                            'assets/logo.png',
-                            width: 140.0,
-                            height: 140.0,
-                            fit: BoxFit.contain,
-                            color: const Color(0xFF00FFCC), // 倒影偏青绿
-                            colorBlendMode: BlendMode.srcIn,
+                        child: ImageFiltered(
+                          imageFilter: ui.ImageFilter.blur(sigmaX: 4.0, sigmaY: 4.0), 
+                          child: Opacity(
+                            opacity: 0.08, 
+                            child: Image.asset(
+                              'assets/logo.png',
+                              width: logoSize, // 倒影大小和原图一致
+                              height: logoSize,
+                              fit: BoxFit.contain,
+                              color: const Color(0xFF00FFCC), 
+                              colorBlendMode: BlendMode.srcIn,
+                            ),
                           ),
                         ),
                       ),
@@ -230,7 +243,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                   ),
                 ),
 
-                // 3. 顶层：全屏闪电与屏幕爆闪
+                // 3. 顶层：闪电
                 if (_isLightningStriking)
                   Positioned.fill(
                     child: IgnorePointer(
@@ -240,14 +253,14 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                     ),
                   ),
 
-                // UI 文字
+                // 底部文字
                 Align(
                   alignment: Alignment.bottomCenter,
                   child: Padding(
                     padding: const EdgeInsets.only(bottom: 60.0),
                     child: Text(
                       _status,
-                      style: const TextStyle(fontSize: 16.0, color: Color(0xFF00FFCC), fontWeight: FontWeight.bold),
+                      style: const TextStyle(fontSize: 14.0, color: Color(0xFF00FFCC), fontWeight: FontWeight.bold),
                     ),
                   ),
                 ),
@@ -258,7 +271,8 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   }
 }
 
-// 💧 雨滴类 (加入景深参数)
+// ================== 以下为粒子系统与画笔 ==================
+
 class RainDrop {
   double x, y, speed, length, thickness, opacity, windOffset;
   RainDrop({
@@ -267,13 +281,11 @@ class RainDrop {
   });
 }
 
-// 💦 水花类
 class Splash {
   double x, y, life;
   Splash({required this.x, required this.y}) : life = 1.0;
 }
 
-// 🌧️ 真实暴雨画笔
 class RainPainter extends CustomPainter {
   final List<RainDrop> drops;
   final List<Splash> splashes;
@@ -281,15 +293,14 @@ class RainPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // 画雨滴
     for (var drop in drops) {
       final paint = Paint()
         ..color = Colors.white.withOpacity(drop.opacity)
         ..strokeWidth = drop.thickness
         ..strokeCap = StrokeCap.round;
       
-      if (drop.thickness == 2.0) {
-        paint.maskFilter = const MaskFilter.blur(BlurStyle.normal, 1.0);
+      if (drop.thickness == 1.5) {
+        paint.maskFilter = const MaskFilter.blur(BlurStyle.normal, 0.8);
       }
 
       final startX = drop.x * size.width;
@@ -300,19 +311,18 @@ class RainPainter extends CustomPainter {
       canvas.drawLine(Offset(startX, startY), Offset(endX, endY), paint);
     }
 
-    // 画水花/涟漪
     for (var splash in splashes) {
       final splashPaint = Paint()
-        ..color = Colors.white.withOpacity(splash.life * 0.4)
+        ..color = Colors.white.withOpacity(splash.life * 0.2)
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.0;
+        ..strokeWidth = 0.8;
       
-      double radius = (1.0 - splash.life) * 30;
+      double radius = (1.0 - splash.life) * 15; 
       canvas.drawOval(
         Rect.fromCenter(
           center: Offset(splash.x * size.width, splash.y * size.height),
-          width: radius * 2.5,
-          height: radius * 0.8,
+          width: radius * 2.0,
+          height: radius * 0.5, 
         ),
         splashPaint
       );
@@ -322,33 +332,30 @@ class RainPainter extends CustomPainter {
   bool shouldRepaint(covariant RainPainter oldDelegate) => true;
 }
 
-// ⚡ 撕裂天空的真实闪电
 class RealLightningPainter extends CustomPainter {
   final math.Random random;
   RealLightningPainter({required this.random});
 
   @override
   void paint(Canvas canvas, Size size) {
-    // 1. 全屏环境光爆闪
-    final flashPaint = Paint()..color = Colors.white.withOpacity(0.15);
+    final flashPaint = Paint()..color = Colors.white.withOpacity(0.08);
     canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), flashPaint);
 
-    // 2. 闪电主干（随机落在屏幕任意位置）
     final startX = random.nextDouble() * size.width;
-    final endY = size.height * (0.3 + random.nextDouble() * 0.5);
+    final endY = size.height * (0.2 + random.nextDouble() * 0.6);
 
     final boltPaint = Paint()
       ..color = const Color(0xFFF0F8FF)
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.0
+      ..strokeWidth = 1.5
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.miter;
 
     final glowPaint = Paint()
       ..color = const Color(0xFF00FFCC)
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 12.0
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 15.0);
+      ..strokeWidth = 8.0
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10.0);
 
     _drawBolt(canvas, Offset(startX, 0), endY, boltPaint, glowPaint, 0);
   }
@@ -361,13 +368,13 @@ class RealLightningPainter extends CustomPainter {
     double currentY = start.dy;
 
     while (currentY < endY) {
-      currentY += 20 + random.nextDouble() * 30;
+      currentY += 15 + random.nextDouble() * 20;
       if (currentY > endY) currentY = endY;
-      currentX += (random.nextDouble() - 0.5) * (depth == 0 ? 60 : 30);
+      currentX += (random.nextDouble() - 0.5) * (depth == 0 ? 40 : 20);
       path.lineTo(currentX, currentY);
 
-      if (random.nextDouble() > 0.7 && depth < 2) {
-        _drawBolt(canvas, Offset(currentX, currentY), currentY + 80, bolt, glow, depth + 1);
+      if (random.nextDouble() > 0.8 && depth < 2) {
+        _drawBolt(canvas, Offset(currentX, currentY), currentY + 60, bolt, glow, depth + 1);
       }
     }
 
