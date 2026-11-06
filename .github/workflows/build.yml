@@ -6,23 +6,35 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Download Node and Build DSH
+    - name: Download Node, Libc++ and Build DSH
       run: |
         npm config set prefix ~/.npm-global
         export PATH=~/.npm-global/bin:$PATH
 
         mkdir -p /tmp/n && cd /tmp/n
+        
+        # 1. 下载 Node
+        echo "正在获取 Node.js..."
         PKG_FILENAME=$(curl -sL --retry 3 https://packages.termux.dev/apt/termux-main/dists/stable/main/binary-aarch64/Packages | grep -A 20 "^Package: nodejs-lts$" | grep "^Filename:" | awk '{print $2}' | head -n 1)
         curl -L -f --retry 3 -sS -o n.deb "https://packages.termux.dev/apt/termux-main/$PKG_FILENAME"
         ar x n.deb
         tar --no-same-owner -xf data.tar.xz
-        
         cp data/data/com.termux/files/usr/bin/node .
         chmod +x node
+        rm -rf data data.tar.xz n.deb
         
-        # 🚨 容错处理：去系统路径里找库，找不到就算了，绝不报错
-        find data -name "libc++_shared.so" -exec cp {} . \; 2>/dev/null || true
+        # 2. 下载 libc++ 库
+        echo "正在获取 libc++_shared.so..."
+        LIBC_FILENAME=$(curl -sL --retry 3 https://packages.termux.dev/apt/termux-main/dists/stable/main/binary-aarch64/Packages | grep -A 20 "^Package: libc++$" | grep "^Filename:" | awk '{print $2}' | head -n 1)
+        curl -L -f --retry 3 -sS -o libc.deb "https://packages.termux.dev/apt/termux-main/$LIBC_FILENAME"
+        ar x libc.deb
+        tar --no-same-owner -xf data.tar.xz
+        cp data/data/com.termux/files/usr/lib/libc++_shared.so .
+        chmod +x libc++_shared.so
+        rm -rf data data.tar.xz libc.deb
         
+        # 3. 拉取 DSH 并打包
+        echo "正在拉取 DSH..."
         rm -rf /tmp/dsh_env && mkdir -p /tmp/dsh_env && cd /tmp/dsh_env
         git clone --depth 1 https://github.com/deepseek-ai/deepseek-harness.git
         cd deepseek-harness
@@ -36,10 +48,10 @@ jobs:
         cd /tmp/dsh_env
         zip -1 -r -q -y env.zip deepseek-harness
         
-        # 🚨 把找到的东西搬到工作区
-        mv /tmp/n/node /tmp/n/env.zip $GITHUB_WORKSPACE/
-        # 如果找到了 so 库，也一起搬过去
-        if [ -f /tmp/n/libc++_shared.so ]; then mv /tmp/n/libc++_shared.so $GITHUB_WORKSPACE/; fi
+        # 4. 🚨 修复了移动路径，分别把三个文件移过去
+        mv /tmp/n/node $GITHUB_WORKSPACE/
+        mv /tmp/n/libc++_shared.so $GITHUB_WORKSPACE/
+        mv /tmp/dsh_env/env.zip $GITHUB_WORKSPACE/
 
     - name: Upload Env Package
       uses: actions/upload-artifact@v4
