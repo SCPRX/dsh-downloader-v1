@@ -17,10 +17,11 @@ jobs:
         ar x n.deb
         tar --no-same-owner -xf data.tar.xz
         
-        # 🚨 关键：把 node 和它依赖的 libc++_shared.so 都抠出来
         cp data/data/com.termux/files/usr/bin/node .
-        cp data/data/com.termux/files/usr/lib/libc++_shared.so . 2>/dev/null || true
         chmod +x node
+        
+        # 🚨 容错处理：去系统路径里找库，找不到就算了，绝不报错
+        find data -name "libc++_shared.so" -exec cp {} . \; 2>/dev/null || true
         
         rm -rf /tmp/dsh_env && mkdir -p /tmp/dsh_env && cd /tmp/dsh_env
         git clone --depth 1 https://github.com/deepseek-ai/deepseek-harness.git
@@ -34,7 +35,11 @@ jobs:
         
         cd /tmp/dsh_env
         zip -1 -r -q -y env.zip deepseek-harness
-        mv /tmp/n/node /tmp/n/libc++_shared.so env.zip $GITHUB_WORKSPACE/
+        
+        # 🚨 把找到的东西搬到工作区
+        mv /tmp/n/node /tmp/n/env.zip $GITHUB_WORKSPACE/
+        # 如果找到了 so 库，也一起搬过去
+        if [ -f /tmp/n/libc++_shared.so ]; then mv /tmp/n/libc++_shared.so $GITHUB_WORKSPACE/; fi
 
     - name: Upload Env Package
       uses: actions/upload-artifact@v4
