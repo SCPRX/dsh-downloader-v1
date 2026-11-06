@@ -1,56 +1,28 @@
-name: Build Env Package
+name: Build APK
 on: [push, workflow_dispatch]
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    
-    - name: Build Unified Env Package
+    - uses: actions/setup-java@v4
+      with: { java-version: '17', distribution: 'temurin' }
+    - uses: subosito/flutter-action@v2
+      with: { channel: 'stable' }
+    - name: Compile
       run: |
-        npm config set prefix ~/.npm-global
-        export PATH=~/.npm-global/bin:$PATH
-
-        mkdir -p /tmp/n && cd /tmp/n
-        
-        # 1. 下载 Node
-        PKG_FILENAME=$(curl -sL --retry 3 https://packages.termux.dev/apt/termux-main/dists/stable/main/binary-aarch64/Packages | grep -A 20 "^Package: nodejs-lts$" | grep "^Filename:" | awk '{print $2}' | head -n 1)
-        curl -L -f --retry 3 -sS -o n.deb "https://packages.termux.dev/apt/termux-main/$PKG_FILENAME"
-        ar x n.deb
-        tar --no-same-owner -xf data.tar.xz
-        cp data/data/com.termux/files/usr/bin/node .
-        chmod +x node
-        rm -rf data data.tar.xz n.deb
-        
-        # 2. 下载 libc++
-        LIBC_FILENAME=$(curl -sL --retry 3 https://packages.termux.dev/apt/termux-main/dists/stable/main/binary-aarch64/Packages | grep -A 20 "^Package: libc++$" | grep "^Filename:" | awk '{print $2}' | head -n 1)
-        curl -L -f --retry 3 -sS -o libc.deb "https://packages.termux.dev/apt/termux-main/$LIBC_FILENAME"
-        ar x libc.deb
-        tar --no-same-owner -xf data.tar.xz
-        cp data/data/com.termux/files/usr/lib/libc++_shared.so .
-        chmod +x libc++_shared.so
-        rm -rf data data.tar.xz libc.deb
-        
-        # 3. 拉取 DSH
-        rm -rf /tmp/dsh_env && mkdir -p /tmp/dsh_env && cd /tmp/dsh_env
-        git clone --depth 1 https://github.com/deepseek-ai/deepseek-harness.git
-        cd deepseek-harness
-        npm install -g npm@11
-        npm i -g pnpm@11
-        pnpm i --ignore-scripts
-        
-        T=$(find node_modules/.pnpm -type d -name "node-addon-require-builtin" | head -n 1)
-        if [ -n "$T" ]; then echo "module.exports = { requireBuiltin: (id) => require(id) };" > "$T/lib/index.js"; fi
-        
-        # 4. 🚨 核心：把 Node、libc++ 和 DSH 源码全部打进一个 zip 里
-        cd /tmp/dsh_env
-        cp /tmp/n/node /tmp/n/libc++_shared.so .
-        zip -1 -r -q -y env.zip deepseek-harness node libc++_shared.so
-        
-        mv env.zip $GITHUB_WORKSPACE/
-
-    - name: Upload Env Package
-      uses: actions/upload-artifact@v4
+        flutter create --platforms android --project-name dshapp --org com.dsh build_app
+        cp main.dart build_app/lib/main.dart
+        cp pubspec.yaml build_app/pubspec.yaml
+        cp AndroidManifest.xml build_app/android/app/src/main/AndroidManifest.xml
+        mkdir -p build_app/android/app/src/main/kotlin/com/dsh/dshapp
+        cp MainActivity.kt build_app/android/app/src/main/kotlin/com/dsh/dshapp/MainActivity.kt
+        mkdir -p build_app/assets
+        cp logo.png build_app/assets/logo.png
+        cd build_app
+        flutter pub get
+        flutter build apk --release --target-platform android-arm64
+    - uses: actions/upload-artifact@v4
       with:
-        name: Unified-Env
-        path: env.zip
+        name: Final-APK
+        path: build_app/build/app/outputs/flutter-apk/app-release.apk
