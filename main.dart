@@ -1,84 +1,195 @@
-package com.dsh.dshapp
-import android.os.Bundle
-import io.flutter.embedding.android.FlutterActivity
-import io.flutter.embedding.engine.FlutterEngine
-import io.flutter.plugin.common.MethodChannel
-import java.io.*
-import java.util.zip.ZipInputStream
-import java.util.concurrent.Executors
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'dart:io';
+import 'package:flutter/services.dart';
+import 'dart:math' as math;
 
-class MainActivity: FlutterActivity() {
-    private val CHANNEL = "com.dsh.dshapp/status"
-    private lateinit var channel: MethodChannel
+void main() => runApp(const MyApp());
 
-    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
-        super.configureFlutterEngine(flutterEngine)
-        channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
-        
-        channel.setMethodCallHandler { call, result ->
-            if (call.method == "startExtract") {
-                val path = call.argument<String>("path")
-                if (path != null) {
-                    extractAndStart(File(path))
-                    result.success(true)
-                } else {
-                    result.error("ERROR", "Path is null", null)
-                }
-            }
-        }
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+          useMaterial3: true,
+          colorScheme: ColorScheme.fromSeed(
+              seedColor: const Color(0xFF9C27B0), brightness: Brightness.dark)),
+      home: const ChatScreen(),
+    );
+  }
+}
+
+class ChatScreen extends StatefulWidget {
+  const ChatScreen({super.key});
+  @override
+  State<ChatScreen> createState() => _ChatScreenState();
+}
+
+class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateMixin {
+  final TextEditingController _controller = TextEditingController();
+  String _status = "正在检查环境...";
+  double _progress = 0.0;
+  bool _isReady = false;
+  static const platform = MethodChannel('com.dsh.dshapp/status');
+
+  late AnimationController _enchantController;
+
+  @override
+  void initState() {
+    super.initState();
+    _enchantController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    )..repeat();
+
+    platform.setMethodCallHandler((call) async {
+      if (call.method == 'updateStatus') {
+        setState(() => _status = call.arguments);
+      } else if (call.method == 'updateProgress') {
+        setState(() => _progress = (call.arguments as num).toDouble());
+      } else if (call.method == 'ready') {
+        setState(() {
+          _isReady = true;
+          _progress = 1.0;
+        });
+      }
+    });
+    _checkAndDownload();
+  }
+
+  @override
+  void dispose() {
+    _enchantController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _checkAndDownload() async {
+    final dir = Directory.systemTemp;
+    final envFile = File('${dir.path}/env_data.zip');
+
+    if (await envFile.exists()) {
+      platform.invokeMethod('startExtract', {'path': envFile.path});
+      return;
     }
 
-    private fun extractAndStart(zipFile: File) {
-        fun sendStatus(msg: String) { runOnUiThread { if (::channel.isInitialized) channel.invokeMethod("updateStatus", msg) } }
-        fun sendProgress(p: Float) { runOnUiThread { if (::channel.isInitialized) channel.invokeMethod("updateProgress", p) } }
+    setState(() => _status = "首次启动，正在下载核心环境(847MB)...");
+    try {
+      // 🚨 这里已经是你的真实下载链接！
+      String downloadUrl = 'https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/env.zip'; 
+      var request = http.Request('GET', Uri.parse(downloadUrl));
+      var response = await http.Client().send(request);
+      
+      var contentLength = response.contentLength ?? 0;
+      var received = 0;
+      var sink = envFile.openWrite();
 
-        Executors.newSingleThreadExecutor().execute {
-            try {
-                val d = File(filesDir, "dsh-env")
-                if (!d.exists()) d.mkdirs()
-                
-                sendStatus("正在解压环境(耗时较长)...")
-                val z = ZipInputStream(FileInputStream(zipFile))
-                var e = z.nextEntry
-                val b = ByteArray(8192)
-                while (e != null) {
-                    val f = File(d, e.name)
-                    if (e.isDirectory) f.mkdirs() else {
-                        f.parentFile?.mkdirs()
-                        val o = FileOutputStream(f)
-                        var l: Int
-                        while (z.read(b).also { l = it } > 0) o.write(b, 0, l)
-                        o.close()
-                        f.setExecutable(true)
-                    }
-                    e = z.nextEntry
-                }
-                z.close()
-                zipFile.delete()
-
-                sendStatus("准备执行 Node...")
-                val n = File(applicationInfo.nativeLibraryDir, "libnode_bin.so")
-                if (n.exists()) {
-                    n.setExecutable(true)
-                    val p = ProcessBuilder("/system/bin/sh", "-c", "LD_LIBRARY_PATH=${applicationInfo.nativeLibraryDir} ${n.absolutePath} --expose-internals apps/cli/src/bin.ts web")
-                    p.directory(File(d, "deepseek-harness")) // 解压后的文件夹
-                    p.redirectErrorStream(true)
-                    val process = p.start()
-                    
-                    val reader = BufferedReader(InputStreamReader(process.inputStream))
-                    var line: String?
-                    while (reader.readLine().also { line = it } != null) {
-                        sendStatus("Node: $line")
-                    }
-                } else {
-                    sendStatus("未找到 Node 引擎(请确保你的包包含 node)")
-                }
-                
-                runOnUiThread { if (::channel.isInitialized) channel.invokeMethod("ready", null) }
-
-            } catch (e: Exception) { 
-                sendStatus("崩溃异常: ${e.message}") 
-            }
+      await response.stream.listen((chunk) {
+        sink.add(chunk);
+        received += chunk.length;
+        if (contentLength > 0) {
+          setState(() => _progress = received / contentLength);
         }
+      }).asFuture();
+
+      await sink.close();
+      setState(() => _status = "下载完成，正在解压...");
+      platform.invokeMethod('startExtract', {'path': envFile.path});
+    } catch (e) {
+      setState(() => _status = "下载失败: $e");
     }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('原生 DSH (附魔版)')),
+      body: !_isReady
+          ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  // 🚨 附魔落锤特效
+                  SizedBox(
+                    width: 180.0,
+                    height: 180.0,
+                    child: AnimatedBuilder(
+                      animation: _enchantController,
+                      builder: (context, child) {
+                        return ShaderMask(
+                          shaderCallback: (Rect bounds) {
+                            return SweepGradient(
+                              colors: const [
+                                Color(0xFF9C27B0),
+                                Color(0xFFE040FB),
+                                Color(0xFFFFFFFF),
+                                Color(0xFF651FFF),
+                                Color(0xFF9C27B0),
+                              ],
+                              stops: const [0.0, 0.3, 0.5, 0.7, 1.0],
+                              transform: GradientRotation(_enchantController.value * 2 * math.pi),
+                            ).createShader(bounds);
+                          },
+                          blendMode: BlendMode.srcIn,
+                          child: Image.asset('assets/logo.png', fit: BoxFit.contain),
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 50.0),
+                  SizedBox(
+                    width: 200.0,
+                    height: 200.0,
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        SizedBox(
+                          width: 160.0,
+                          height: 160.0,
+                          child: CircularProgressIndicator(
+                            value: _progress > 0 ? _progress : null,
+                            strokeWidth: 8.0,
+                            backgroundColor: Colors.white12,
+                            color: const Color(0xFF9C27B0),
+                          ),
+                        ),
+                        Text("${(_progress * 100).toStringAsFixed(1)}%",
+                            style: const TextStyle(
+                                fontSize: 36.0,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white)),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 30.0),
+                  Text(_status, style: const TextStyle(fontSize: 16.0, color: Colors.grey)),
+                ],
+              ),
+            )
+          : Column(
+              children: [
+                const Expanded(
+                  child: Center(
+                      child: Text("Node 引擎已就绪！可以开始对话。",
+                          style: TextStyle(fontSize: 20, color: Colors.blueAccent))),
+                ),
+                Padding(
+                  padding: const EdgeInsets.all(8.0),
+                  child: TextField(
+                    controller: _controller,
+                    decoration: InputDecoration(
+                      hintText: "输入指令...",
+                      filled: true,
+                      fillColor: Colors.grey[900],
+                      border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(24.0),
+                          borderSide: BorderSide.none),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+    );
+  }
 }
