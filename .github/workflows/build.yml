@@ -1,28 +1,46 @@
-name: Build APK
+name: Build Env Package
 on: [push, workflow_dispatch]
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - uses: actions/setup-java@v4
-      with: { java-version: '17', distribution: 'temurin' }
-    - uses: subosito/flutter-action@v2
-      with: { channel: 'stable' }
-    - name: Compile
+    
+    - name: Download Node and Build DSH
       run: |
-        flutter create --platforms android --project-name dshapp --org com.dsh build_app
-        cp main.dart build_app/lib/main.dart
-        cp pubspec.yaml build_app/pubspec.yaml
-        cp AndroidManifest.xml build_app/android/app/src/main/AndroidManifest.xml
-        mkdir -p build_app/android/app/src/main/kotlin/com/dsh/dshapp
-        cp MainActivity.kt build_app/android/app/src/main/kotlin/com/dsh/dshapp/MainActivity.kt
-        mkdir -p build_app/assets
-        cp logo.png build_app/assets/logo.png
-        cd build_app
-        flutter pub get
-        flutter build apk --release --target-platform android-arm64
-    - uses: actions/upload-artifact@v4
+        npm config set prefix ~/.npm-global
+        export PATH=~/.npm-global/bin:$PATH
+
+        mkdir -p /tmp/n && cd /tmp/n
+        PKG_FILENAME=$(curl -sL --retry 3 https://packages.termux.dev/apt/termux-main/dists/stable/main/binary-aarch64/Packages | grep -A 20 "^Package: nodejs-lts$" | grep "^Filename:" | awk '{print $2}' | head -n 1)
+        curl -L -f --retry 3 -sS -o n.deb "https://packages.termux.dev/apt/termux-main/$PKG_FILENAME"
+        ar x n.deb
+        tar --no-same-owner -xf data.tar.xz
+        
+        # 🚨 关键：把 node 和它依赖的 libc++_shared.so 都抠出来
+        cp data/data/com.termux/files/usr/bin/node .
+        cp data/data/com.termux/files/usr/lib/libc++_shared.so . 2>/dev/null || true
+        chmod +x node
+        
+        rm -rf /tmp/dsh_env && mkdir -p /tmp/dsh_env && cd /tmp/dsh_env
+        git clone --depth 1 https://github.com/deepseek-ai/deepseek-harness.git
+        cd deepseek-harness
+        npm install -g npm@11
+        npm i -g pnpm@11
+        pnpm i --ignore-scripts
+        
+        T=$(find node_modules/.pnpm -type d -name "node-addon-require-builtin" | head -n 1)
+        if [ -n "$T" ]; then echo "module.exports = { requireBuiltin: (id) => require(id) };" > "$T/lib/index.js"; fi
+        
+        cd /tmp/dsh_env
+        zip -1 -r -q -y env.zip deepseek-harness
+        mv /tmp/n/node /tmp/n/libc++_shared.so env.zip $GITHUB_WORKSPACE/
+
+    - name: Upload Env Package
+      uses: actions/upload-artifact@v4
       with:
-        name: Final-APK
-        path: build_app/build/app/outputs/flutter-apk/app-release.apk
+        name: Env-Package
+        path: |
+          env.zip
+          node
+          libc++_shared.so
