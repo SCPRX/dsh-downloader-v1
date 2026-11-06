@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/services.dart';
 import 'dart:math' as math;
+import 'dart:async';
 
 void main() => runApp(const MyApp());
 
@@ -37,20 +38,19 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   bool _isReady = false;
   static const platform = MethodChannel('com.dsh.dshapp/status');
   late AnimationController _auroraController;
-
-  // 🌌 极光色板
-  final List<Color> _auroraColors = [
-    const Color(0xFF00FFCC), // 亮青
-    const Color(0xFF0088FF), // 深蓝
-    const Color(0xFFAA00FF), // 紫罗兰
-    const Color(0xFF00FFCC), // 循环
-  ];
+  
+  // ⚡ 控制闪电状态
+  bool _isLightningStriking = false;
+  Timer? _lightningTimer;
+  final math.Random _random = math.Random();
 
   @override
   void initState() {
     super.initState();
-    // 极光动画
     _auroraController = AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat();
+    
+    // ⚡ 启动闪电定时循环
+    _startLightningLoop();
 
     platform.setMethodCallHandler((call) async {
       if (call.method == 'updateStatus') {
@@ -67,8 +67,31 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     _start();
   }
 
+  // ⚡ 真正随机时间的闪电逻辑
+  void _startLightningLoop() {
+    // 随机间隔：1500毫秒（1.5秒）到 8000毫秒（8秒）之间随机
+    int randomDelay = 1500 + _random.nextInt(6500);
+    
+    _lightningTimer = Timer(Duration(milliseconds: randomDelay), () {
+      if (mounted) {
+        setState(() => _isLightningStriking = true);
+        
+        // 随机持续时间：80毫秒（极快闪烁）到 200毫秒（稍微停留）之间随机
+        int randomDuration = 80 + _random.nextInt(120);
+        
+        Future.delayed(Duration(milliseconds: randomDuration), () {
+          if (mounted) {
+            setState(() => _isLightningStriking = false);
+            _startLightningLoop(); // 递归重新触发下一轮
+          }
+        });
+      }
+    });
+  }
+
   @override
   void dispose() {
+    _lightningTimer?.cancel();
     _auroraController.dispose();
     super.dispose();
   }
@@ -76,7 +99,6 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   Future<void> _start() async {
     final envFile = File('${Directory.systemTemp.path}/env_data.zip');
     if (await envFile.exists()) {
-      // 删除旧的损坏包
       try { envFile.deleteSync(); } catch(e) {}
     }
 
@@ -125,42 +147,55 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('原生 DSH')),
-      backgroundColor: const Color(0xFF0B0F19), 
+      backgroundColor: const Color(0xFF06080F),
       body: !_isReady
           ? Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   
-                  // 🌌 极光环绕落锤
+                  // 🌌 极光 + 闪电 + 落锤
                   SizedBox(
-                    width: 240.0, 
-                    height: 240.0,
+                    width: 260.0, 
+                    height: 260.0,
                     child: AnimatedBuilder(
                       animation: _auroraController,
                       builder: (context, child) {
                         return Stack(
                           alignment: Alignment.center,
                           children: [
-                            // 1. 底层：纯白落锤
-                            SizedBox(
+                            // 1. 落锤 (雷电闪击时，落锤爆亮白光并带光晕)
+                            AnimatedContainer(
+                              duration: Duration(milliseconds: 50),
                               width: 140.0,
                               height: 140.0,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                boxShadow: [
+                                  if (_isLightningStriking)
+                                    BoxShadow(
+                                      color: Colors.white.withOpacity(0.8),
+                                      blurRadius: 50,
+                                      spreadRadius: 15,
+                                    )
+                                ],
+                              ),
                               child: Image.asset(
                                 'assets/logo.png',
                                 fit: BoxFit.contain,
-                                color: Colors.white, // 强制染白，防止变黑
+                                color: _isLightningStriking ? Colors.white : Colors.white70, // 闪击时全白
                                 colorBlendMode: BlendMode.srcIn,
                               ),
                             ),
                             
-                            // 2. 外层：极光进度圈
+                            // 2. 外层：极光与闪电画笔
                             CustomPaint(
-                              size: const Size(220.0, 220.0),
-                              painter: AuroraRingPainter(
+                              size: const Size(240.0, 240.0),
+                              painter: AuroraLightningPainter(
                                 progress: _progress,
-                                rotation: _auroraController.value,
-                                colors: _auroraColors,
+                                animationValue: _auroraController.value,
+                                isLightning: _isLightningStriking,
+                                random: _random,
                               ),
                             ),
                           ],
@@ -169,7 +204,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                     ),
                   ),
                   
-                  const SizedBox(height: 40.0),
+                  const SizedBox(height: 50.0),
                   Text(
                     _status, 
                     style: const TextStyle(
@@ -225,7 +260,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                         IconButton.filled(
                           icon: const Icon(Icons.send), 
                           onPressed: _sendMessage,
-                          style: IconButton.styleFrom(backgroundColor: const Color(0xFF8A2BE2)),
+                          style: IconButton.styleFrom(backgroundColor: const Color(0xFF00FFCC)),
                         ),
                       ],
                     ),
@@ -237,66 +272,118 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   }
 }
 
-// 🎨 极光光带画笔 (光环版)
-class AuroraRingPainter extends CustomPainter {
+// 🎨 极光流波 + 闪电画笔
+class AuroraLightningPainter extends CustomPainter {
   final double progress;
-  final double rotation;
-  final List<Color> colors;
+  final double animationValue;
+  final bool isLightning;
+  final math.Random random;
 
-  AuroraRingPainter({
-    required this.progress,
-    required this.rotation,
-    required this.colors,
+  AuroraLightningPainter({
+    required this.progress, 
+    required this.animationValue,
+    required this.isLightning,
+    required this.random,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
     final radius = size.width / 2;
+    final rect = Rect.fromCircle(center: center, radius: radius - 4);
 
-    // 底部的暗色轨道
+    final auroraColors = [
+      const Color(0xFF0044FF),
+      const Color(0xFF00FFCC),
+      const Color(0xFF00FF88),
+      const Color(0xFFAA00FF),
+      const Color(0xFF0044FF),
+    ];
+
+    // 1. 底圈
     final trackPaint = Paint()
-      ..color = Colors.white10
+      ..color = Colors.white.withOpacity(0.05)
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 8.0
-      ..isAntiAlias = true;
+      ..strokeWidth = 6.0;
     canvas.drawCircle(center, radius - 4, trackPaint);
 
-    // 旋转的极光渐变
-    final gradient = SweepGradient(
-      colors: colors,
-      stops: const [0.0, 0.3, 0.7, 1.0],
-      transform: GradientRotation(rotation * 2 * math.pi),
+    // 2. 极光渐变
+    final sweepGradient = SweepGradient(
+      colors: auroraColors,
+      stops: const [0.0, 0.25, 0.5, 0.75, 1.0],
+      transform: GradientRotation(animationValue * 2 * math.pi),
     );
 
-    // 核心极光光束（带高斯模糊，产生弥散发光感）
-    final glowPaint = Paint()
-      ..shader = gradient.createShader(Rect.fromCircle(center: center, radius: radius))
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 16.0
-      ..strokeCap = StrokeCap.round
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8.0);
+    // 3. 极光流波
+    for (int i = 0; i < 3; i++) {
+      double startAngle = (animationValue * 2 * math.pi) + (i * math.pi / 1.5);
+      double sweepAngle = progress > 0 ? (progress * 2 * math.pi) : 1.5;
+      if (progress > 0) startAngle = -math.pi / 2;
 
-    // 锐利的极光核心（高亮）
-    final corePaint = Paint()
-      ..shader = gradient.createShader(Rect.fromCircle(center: center, radius: radius))
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 6.0
-      ..strokeCap = StrokeCap.round;
+      final glowPaint = Paint()
+        ..shader = sweepGradient.createShader(rect)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 12.0 + (i * 4.0)
+        ..strokeCap = StrokeCap.round
+        ..maskFilter = MaskFilter.blur(BlurStyle.normal, 10.0 + (i * 5.0));
 
-    if (progress == 0) {
-      // 如果还没开始下载，画一段旋转的光带，表示正在准备
-      canvas.drawArc(Rect.fromCircle(center: center, radius: radius - 4), 0, 1.5, false, glowPaint);
-      canvas.drawArc(Rect.fromCircle(center: center, radius: radius - 4), 0, 1.5, false, corePaint);
-    } else {
-      // 如果有进度，画出对应的光带
-      canvas.drawArc(Rect.fromCircle(center: center, radius: radius - 4), -math.pi / 2, progress * 2 * math.pi, false, glowPaint);
-      canvas.drawArc(Rect.fromCircle(center: center, radius: radius - 4), -math.pi / 2, progress * 2 * math.pi, false, corePaint);
+      final corePaint = Paint()
+        ..shader = sweepGradient.createShader(rect)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 4.0
+        ..strokeCap = StrokeCap.round;
+
+      canvas.drawArc(rect, startAngle, sweepAngle, false, glowPaint);
+      canvas.drawArc(rect, startAngle, sweepAngle, false, corePaint);
+    }
+
+    // 4. ⚡ 闪电降临
+    if (isLightning) {
+      final lightningGlowPaint = Paint()
+        ..color = Colors.white
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 10.0
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.miter
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10.0);
+
+      final lightningCorePaint = Paint()
+        ..color = const Color(0xFF00FFCC)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 3.0
+        ..strokeCap = StrokeCap.round;
+
+      int numBolts = random.nextInt(2) + 1; 
+      for (int b = 0; b < numBolts; b++) {
+        final path = Path();
+        double startAngle = random.nextDouble() * 2 * math.pi;
+        double angleSpan = (random.nextDouble() * 1.5 + 0.5) * (random.nextBool() ? 1 : -1);
+        int segments = 8 + random.nextInt(6); 
+        
+        for (int i = 0; i <= segments; i++) {
+          double t = i / segments;
+          double currentAngle = startAngle + (angleSpan * t);
+          double noise = (random.nextDouble() - 0.5) * 25.0;
+          double currentRadius = (radius - 10) + noise;
+          
+          double x = center.dx + currentRadius * math.cos(currentAngle);
+          double y = center.dy + currentRadius * math.sin(currentAngle);
+          
+          if (i == 0) {
+            path.moveTo(x, y);
+          } else {
+            path.lineTo(x, y);
+          }
+        }
+        
+        canvas.drawPath(path, lightningGlowPaint);
+        canvas.drawPath(path, lightningCorePaint);
+      }
     }
   }
 
   @override
-  bool shouldRepaint(covariant AuroraRingPainter oldDelegate) {
-    return oldDelegate.progress != progress || oldDelegate.rotation != rotation;
+  bool shouldRepaint(covariant AuroraLightningPainter oldDelegate) {
+    return true; 
   }
 }
