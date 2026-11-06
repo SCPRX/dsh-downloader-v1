@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:io';
+import 'package:flutter/services.dart';
 import 'dart:math' as math;
-import 'dart:async';
-import 'dart:ui' as ui;
 
 void main() => runApp(const MyApp());
 
@@ -29,248 +28,216 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateMixin {
-  String _status = "首次启动，正在下载核心环境(847MB)...";
+  String _status = "正在检查环境...";
   double _progress = 0.0;
+  bool _isReady = false;
+  static const platform = MethodChannel('com.dsh.dshapp/status');
   
-  late AnimationController _weatherController;
-  bool _isLightningStriking = false;
-  Timer? _lightningTimer;
+  late AnimationController _bgController;
+  final double logoSize = 160.0;
   final math.Random _random = math.Random();
-  
-  List<RainDrop> _raindrops = [];
-  final double logoSize = 160.0; 
 
   @override
   void initState() {
     super.initState();
-    _weatherController = AnimationController(vsync: this, duration: const Duration(seconds: 1))..repeat();
-    _weatherController.addListener(_updateParticles);
-    _initRain();
-    _startLightningLoop();
-  }
+    _bgController = AnimationController(vsync: this, duration: const Duration(seconds: 25))..repeat();
 
-  void _initRain() {
-    for (int i = 0; i < 100; i++) {
-      int layer = _random.nextInt(3);
-      _raindrops.add(RainDrop(
-        x: _random.nextDouble(),
-        y: _random.nextDouble(),
-        // 立体感核心：远近雨滴速度、长度、粗细、倾斜度完全不同
-        speed: layer == 2 ? 2.0 + _random.nextDouble() : (layer == 1 ? 1.2 : 0.5),
-        length: layer == 2 ? 50.0 : (layer == 1 ? 25.0 : 10.0),
-        thickness: layer == 2 ? 2.5 : (layer == 1 ? 1.2 : 0.6),
-        opacity: layer == 2 ? 0.6 : (layer == 1 ? 0.3 : 0.1),
-        windOffset: -0.3, // 被风吹歪的倾斜度
-      ));
-    }
-  }
-
-  void _updateParticles() {
-    if (!mounted) return;
-    setState(() {
-      for (var drop in _raindrops) {
-        drop.y += drop.speed * 0.02;
-        drop.x += drop.windOffset * 0.02;
-        if (drop.y > 1.0 || drop.x < 0) {
-          drop.y = 0;
-          drop.x = _random.nextDouble() + 0.3;
-        }
-      }
+    platform.setMethodCallHandler((call) async {
+      if (call.method == 'updateStatus') setState(() => _status = call.arguments);
+      if (call.method == 'updateProgress') setState(() => _progress = (call.arguments as num).toDouble());
+      if (call.method == 'ready') setState(() => _isReady = true);
     });
-  }
-
-  void _startLightningLoop() {
-    int randomDelay = 3000 + _random.nextInt(4000); 
-    _lightningTimer = Timer(Duration(milliseconds: randomDelay), () {
-      if (mounted) {
-        setState(() => _isLightningStriking = true);
-        Future.delayed(const Duration(milliseconds: 100), () {
-          if (mounted) setState(() => _isLightningStriking = false);
-          _startLightningLoop();
-        });
-      }
-    });
+    _start();
   }
 
   @override
   void dispose() {
-    _lightningTimer?.cancel();
-    _weatherController.dispose();
+    _bgController.dispose();
     super.dispose();
+  }
+
+  Future<void> _start() async {
+    final envFile = File('${Directory.systemTemp.path}/env_data.zip');
+    if (await envFile.exists()) {
+      try { envFile.deleteSync(); } catch(e) {}
+    }
+
+    setState(() => _status = "首次启动，正在下载核心环境(847MB)...");
+    try {
+      String url = 'https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/env.zip';
+      var request = http.Request('GET', Uri.parse(url));
+      var response = await http.Client().send(request);
+      var contentLength = response.contentLength ?? 0;
+      var received = 0;
+      var sink = envFile.openWrite();
+
+      await response.stream.listen((chunk) {
+        sink.add(chunk);
+        received += chunk.length;
+        if (contentLength > 0) setState(() => _progress = received / contentLength);
+      }).asFuture();
+
+      await sink.close();
+      setState(() => _status = "下载完成，正在解压(耗时较长)...");
+      platform.invokeMethod('startExtract', {'path': envFile.path});
+    } catch (e) {
+      setState(() => _status = "下载失败: $e");
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // 深度立体感：背景用径向渐变，中间亮四周暗
-      backgroundColor: Colors.transparent, 
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: RadialGradient(
-            center: Alignment(0, -0.2),
-            radius: 1.0,
-            colors: [
-              Color(0xFF101826), // 微微透亮的夜空蓝
-              Color(0xFF05070A), // 边缘极限黑
-            ],
-          ),
-        ),
-        child: Stack(
-          children: [
-            // 1. 景深暴雨
-            Positioned.fill(
-              child: CustomPaint(painter: RainPainter(_raindrops)),
-            ),
-
-            // 2. 落锤与湿滑倒影
-            Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  // 落锤带立体光晕
-                  Container(
-                    width: logoSize,
-                    height: logoSize,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      boxShadow: _isLightningStriking ? [
-                        const BoxShadow(color: Colors.white, blurRadius: 50, spreadRadius: 20)
-                      ] : null, // 只有闪电时爆光，平时靠边框
-                    ),
-                    child: Image.asset(
-                      'assets/logo.png',
-                      fit: BoxFit.contain,
-                      color: _isLightningStriking ? Colors.white : Colors.white70,
-                      colorBlendMode: BlendMode.srcIn,
-                    ),
+      backgroundColor: const Color(0xFF02050A), 
+      body: !_isReady
+          ? Stack(
+              children: [
+                // 1. 背景：纯白动态星空云
+                Positioned.fill(
+                  child: AnimatedBuilder(
+                    animation: _bgController,
+                    builder: (context, child) {
+                      return CustomPaint(
+                        painter: StarryCloudPainter(_bgController.value),
+                      );
+                    },
                   ),
-                  
-                  // 湿滑倒影 (利用 ShaderMask 做渐隐)
-                  Transform(
-                    transform: Matrix4.identity()
-                      ..scale(1.0, -0.6) // 压缩并翻转
-                      ..translate(0.0, -logoSize * 0.6),
-                    alignment: Alignment.topCenter,
-                    child: ShaderMask(
-                      shaderCallback: (Rect bounds) {
-                        return const LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [Colors.white, Colors.transparent], // 渐隐，越往下越看不见
-                        ).createShader(bounds);
-                      },
-                      child: ImageFiltered(
-                        imageFilter: ui.ImageFilter.blur(sigmaX: 3.0, sigmaY: 8.0), // 纵向拉伸模糊，模拟水面
-                        child: Opacity(
-                          opacity: 0.15,
-                          child: Image.asset(
-                            'assets/logo.png',
-                            width: logoSize,
-                            height: logoSize,
-                            fit: BoxFit.contain,
-                            color: const Color(0xFF00FFCC),
-                            colorBlendMode: BlendMode.srcIn,
+                ),
+
+                // 2. 中心：落锤、阴影与进度圈
+                Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      SizedBox(
+                        width: logoSize,
+                        height: logoSize,
+                        child: Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            // 落锤底部光晕 (给纯白一点点缀)
+                            Container(
+                              width: logoSize * 0.8,
+                              height: logoSize * 0.8,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.white.withOpacity(0.05),
+                                    blurRadius: 40,
+                                    spreadRadius: 10,
+                                  )
+                                ],
+                              ),
+                            ),
+                            // 落锤本体
+                            Image.asset(
+                              'assets/logo.png',
+                              width: logoSize * 0.75,
+                              height: logoSize * 0.75,
+                              fit: BoxFit.contain,
+                              color: Colors.white,
+                              colorBlendMode: BlendMode.srcIn,
+                            ),
+                            // 进度圈
+                            SizedBox(
+                              width: logoSize,
+                              height: logoSize,
+                              child: CircularProgressIndicator(
+                                value: _progress > 0 ? _progress : null,
+                                strokeWidth: 3.0,
+                                backgroundColor: Colors.white12,
+                                color: const Color(0xFF00FFCC),
+                                strokeAlign: CircularProgressIndicator.strokeAlignCenter,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      
+                      const SizedBox(height: 40),
+                      
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        child: Text(
+                          _status,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 14.0, 
+                            color: Color(0xFF00FFCC),
+                            fontWeight: FontWeight.bold,
                           ),
                         ),
                       ),
-                    ),
+                    ],
                   ),
-                ],
-              ),
-            ),
-
-            // 3. 闪电
-            if (_isLightningStriking)
-              Positioned.fill(
-                child: IgnorePointer(child: CustomPaint(painter: RealLightningPainter(random: _random))),
-              ),
-
-            // 底部文字
-            Align(
-              alignment: Alignment.bottomCenter,
-              child: Padding(
-                padding: const EdgeInsets.only(bottom: 60.0),
-                child: Text(
-                  _status,
-                  style: const TextStyle(fontSize: 14.0, color: Color(0xFF00FFCC), fontWeight: FontWeight.bold),
                 ),
-              ),
-            ),
-          ],
-        ),
-      ),
+              ],
+            )
+          : const Center(child: Text("引擎就绪", style: TextStyle(color: Colors.white, fontSize: 18))),
     );
   }
 }
 
-class RainDrop {
-  double x, y, speed, length, thickness, opacity, windOffset;
-  RainDrop({required this.x, required this.y, required this.speed, required this.length, required this.thickness, required this.opacity, required this.windOffset});
-}
+// 🌌 纯白星空动态云画笔
+class StarryCloudPainter extends CustomPainter {
+  final double animationValue;
 
-class RainPainter extends CustomPainter {
-  final List<RainDrop> drops;
-  RainPainter(this.drops);
+  StarryCloudPainter(this.animationValue);
 
   @override
   void paint(Canvas canvas, Size size) {
-    for (var drop in drops) {
-      final paint = Paint()
-        ..color = Colors.white.withOpacity(drop.opacity)
-        ..strokeWidth = drop.thickness
-        ..strokeCap = StrokeCap.round;
-      
-      // 近处的雨滴带有动态模糊
-      if (drop.thickness > 2.0) {
-        paint.maskFilter = const MaskFilter.blur(BlurStyle.normal, 1.5);
-      }
-
-      final startX = drop.x * size.width;
-      final startY = drop.y * size.height;
-      // 倾斜终点
-      final endX = startX - (drop.length * drop.windOffset);
-      final endY = startY + drop.length;
-
-      canvas.drawLine(Offset(startX, startY), Offset(endX, endY), paint);
-    }
-  }
-  @override
-  bool shouldRepaint(covariant RainPainter oldDelegate) => true;
-}
-
-class RealLightningPainter extends CustomPainter {
-  final math.Random random;
-  RealLightningPainter({required this.random});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final flashPaint = Paint()..color = Colors.white.withOpacity(0.1);
-    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), flashPaint);
+    final center = Offset(size.width / 2, size.height / 2);
     
-    final startX = random.nextDouble() * size.width;
-    final endY = size.height * (0.2 + random.nextDouble() * 0.6);
-    final boltPaint = Paint()..color = const Color(0xFFF0F8FF)..style = PaintingStyle.stroke..strokeWidth = 2.0;
-    final glowPaint = Paint()..color = const Color(0xFF00FFCC)..style = PaintingStyle.stroke..strokeWidth = 10.0..maskFilter = const MaskFilter.blur(BlurStyle.normal, 12.0);
+    final cloudPaint = Paint()
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 80.0); // 极度模糊
 
-    _drawBolt(canvas, Offset(startX, 0), endY, boltPaint, glowPaint, 0);
-  }
+    // 星云1：亮白，从左上飘过
+    final cloud1Offset = Offset(
+      center.dx - 120 + math.sin(animationValue * math.pi * 2) * 40,
+      center.dy - 180 + math.cos(animationValue * math.pi * 2) * 30,
+    );
+    final cloud1Rect = Rect.fromCircle(center: cloud1Offset, radius: 220);
+    cloudPaint.shader = RadialGradient(
+      colors: [Colors.white.withOpacity(0.12), Colors.transparent],
+    ).createShader(cloud1Rect);
+    canvas.drawCircle(cloud1Offset, 220, cloudPaint);
 
-  void _drawBolt(Canvas canvas, Offset start, double endY, Paint bolt, Paint glow, int depth) {
-    if (depth > 2) return;
-    final path = Path()..moveTo(start.dx, start.dy);
-    double currentX = start.dx, currentY = start.dy;
-    while (currentY < endY) {
-      currentY += 15 + random.nextDouble() * 20;
-      if (currentY > endY) currentY = endY;
-      currentX += (random.nextDouble() - 0.5) * (depth == 0 ? 40 : 20);
-      path.lineTo(currentX, currentY);
-      if (random.nextDouble() > 0.8 && depth < 2) {
-        _drawBolt(canvas, Offset(currentX, currentY), currentY + 60, bolt, glow, depth + 1);
+    // 星云2：暗白，从右下飘过
+    final cloud2Offset = Offset(
+      center.dx + 150 + math.cos(animationValue * math.pi * 2) * 50,
+      center.dy + 200 + math.sin(animationValue * math.pi * 2) * 40,
+    );
+    final cloud2Rect = Rect.fromCircle(center: cloud2Offset, radius: 260);
+    cloudPaint.shader = RadialGradient(
+      colors: [Colors.white.withOpacity(0.08), Colors.transparent],
+    ).createShader(cloud2Rect);
+    canvas.drawCircle(cloud2Offset, 260, cloudPaint);
+
+    // 满天繁星
+    final starPaint = Paint()..style = PaintingStyle.fill;
+    for (int i = 0; i < 80; i++) {
+      math.Random starRandom = math.Random(i * 100); 
+      double x = starRandom.nextDouble() * size.width;
+      double y = starRandom.nextDouble() * size.height;
+      
+      double twinkle = (math.sin(animationValue * math.pi * 4 + i) + 1) / 2;
+      double opacity = 0.2 + twinkle * 0.8; 
+      
+      double radius = starRandom.nextDouble() * 1.5 + 0.5; 
+      
+      if (radius > 1.8) {
+        final glowPaint = Paint()
+          ..color = Colors.white.withOpacity(opacity * 0.6)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4.0);
+        canvas.drawCircle(Offset(x, y), radius * 2, glowPaint);
       }
+
+      starPaint.color = Colors.white.withOpacity(opacity);
+      canvas.drawCircle(Offset(x, y), radius, starPaint);
     }
-    canvas.drawPath(path, glow);
-    canvas.drawPath(path, bolt);
   }
+
   @override
-  bool shouldRepaint(covariant RealLightningPainter oldDelegate) => true;
+  bool shouldRepaint(covariant StarryCloudPainter oldDelegate) => true;
 }
