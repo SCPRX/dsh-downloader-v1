@@ -37,7 +37,7 @@ class MainActivity: FlutterActivity() {
                 val d = File(filesDir, "dsh-env")
                 if (!d.exists()) d.mkdirs()
                 
-                sendStatus("正在解压环境...")
+                sendStatus("正在解压环境(耗时较长)...")
                 val z = ZipInputStream(FileInputStream(zipFile))
                 var e = z.nextEntry
                 val b = ByteArray(8192)
@@ -56,33 +56,28 @@ class MainActivity: FlutterActivity() {
                 z.close()
                 zipFile.delete()
 
-                sendStatus("解压完成，准备执行 Node...")
+                sendStatus("准备执行 Node...")
+                // 🚨 注意：咱们下载的包里，node 文件直接在根目录
+                val n = File(d, "node")
                 
-                // 🚨 真正启动 Node 引擎
-                val n = File(applicationInfo.nativeLibraryDir, "libnode_bin.so")
                 if (n.exists()) {
                     n.setExecutable(true)
-                    val p = ProcessBuilder("/system/bin/sh", "-c", "LD_LIBRARY_PATH=${applicationInfo.nativeLibraryDir} ${n.absolutePath} --expose-internals apps/cli/src/bin.ts web")
-                    
-                    // 注意：因为下载的是源码包，目录是 deepseek-harness-main，如果你以后换成编译好的包，这里要改成对应的文件夹
-                    p.directory(File(d, "deepseek-harness-main")) 
+                    // 配置环境变量，并且启动 node
+                    val p = ProcessBuilder("/system/bin/sh", "-c", "LD_LIBRARY_PATH=${d.absolutePath} ${n.absolutePath} --expose-internals apps/cli/src/bin.ts web")
+                    p.directory(File(d, "deepseek-harness"))
                     p.redirectErrorStream(true)
+                    val process = p.start()
                     
-                    try {
-                        val process = p.start()
-                        val reader = BufferedReader(InputStreamReader(process.inputStream))
-                        var line: String?
-                        while (reader.readLine().also { line = it } != null) {
-                            sendStatus("Node: $line")
-                        }
-                    } catch (e: Exception) {
-                        sendStatus("Node 启动失败: ${e.message}")
+                    // 监听 Node 的输出，打到前端界面
+                    val reader = BufferedReader(InputStreamReader(process.inputStream))
+                    var line: String?
+                    while (reader.readLine().also { line = it } != null) {
+                        sendStatus("Node: $line")
                     }
                 } else {
-                    sendStatus("找不到 Node 引擎文件，等待后续注入...")
+                    sendStatus("找不到 node 文件，请检查环境包")
                 }
                 
-                // 无论如何，先通知 UI 就绪
                 runOnUiThread { if (::channel.isInitialized) channel.invokeMethod("ready", null) }
 
             } catch (e: Exception) { 
