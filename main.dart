@@ -35,7 +35,6 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   
   late AnimationController _bgController;
   final double logoSize = 160.0;
-  final math.Random _random = math.Random();
 
   @override
   void initState() {
@@ -87,12 +86,13 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
 
   @override
   Widget build(BuildContext context) {
+    // 彻底去掉 AppBar，沉浸式
     return Scaffold(
       backgroundColor: const Color(0xFF02050A), 
       body: !_isReady
           ? Stack(
               children: [
-                // 1. 背景：纯白动态星空云
+                // 1. 动态星空云背景
                 Positioned.fill(
                   child: AnimatedBuilder(
                     animation: _bgController,
@@ -104,42 +104,28 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                   ),
                 ),
 
-                // 2. 中心：落锤、阴影与进度圈
+                // 2. 中心的落锤与进度
                 Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
+                      // 🚨 尺寸完美对齐：图片和圈使用同一个 160 尺寸
                       SizedBox(
                         width: logoSize,
                         height: logoSize,
                         child: Stack(
                           alignment: Alignment.center,
                           children: [
-                            // 落锤底部光晕 (给纯白一点点缀)
-                            Container(
-                              width: logoSize * 0.8,
-                              height: logoSize * 0.8,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.white.withOpacity(0.05),
-                                    blurRadius: 40,
-                                    spreadRadius: 10,
-                                  )
-                                ],
-                              ),
-                            ),
-                            // 落锤本体
+                            // 落锤本体 (直接铺满 160，去掉了 0.75 的缩放)
                             Image.asset(
                               'assets/logo.png',
-                              width: logoSize * 0.75,
-                              height: logoSize * 0.75,
+                              width: logoSize,
+                              height: logoSize,
                               fit: BoxFit.contain,
                               color: Colors.white,
                               colorBlendMode: BlendMode.srcIn,
                             ),
-                            // 进度圈
+                            // 进度圈：与图片完全同一个大小
                             SizedBox(
                               width: logoSize,
                               height: logoSize,
@@ -148,7 +134,8 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                                 strokeWidth: 3.0,
                                 backgroundColor: Colors.white12,
                                 color: const Color(0xFF00FFCC),
-                                strokeAlign: CircularProgressIndicator.strokeAlignCenter,
+                                // 居中对齐，让白线刚好卡在落锤的外圆上
+                                strokeAlign: CircularProgressIndicator.strokeAlignCenter, 
                               ),
                             ),
                           ],
@@ -157,6 +144,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                       
                       const SizedBox(height: 40),
                       
+                      // 底部状态文字
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 20),
                         child: Text(
@@ -179,7 +167,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   }
 }
 
-// 🌌 纯白星空动态云画笔
+// 🌌 动态星空云画笔
 class StarryCloudPainter extends CustomPainter {
   final double animationValue;
 
@@ -190,29 +178,29 @@ class StarryCloudPainter extends CustomPainter {
     final center = Offset(size.width / 2, size.height / 2);
     
     final cloudPaint = Paint()
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 80.0); // 极度模糊
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 50.0); // 模糊度从80降到50，更清晰
 
-    // 星云1：亮白，从左上飘过
+    // 星云1：亮白，加大透明度和体积
     final cloud1Offset = Offset(
-      center.dx - 120 + math.sin(animationValue * math.pi * 2) * 40,
-      center.dy - 180 + math.cos(animationValue * math.pi * 2) * 30,
+      center.dx - 80 + math.sin(animationValue * math.pi * 2) * 60,
+      center.dy - 150 + math.cos(animationValue * math.pi * 2) * 40,
     );
-    final cloud1Rect = Rect.fromCircle(center: cloud1Offset, radius: 220);
+    final cloud1Rect = Rect.fromCircle(center: cloud1Offset, radius: 250);
     cloudPaint.shader = RadialGradient(
-      colors: [Colors.white.withOpacity(0.12), Colors.transparent],
+      colors: [Colors.white.withOpacity(0.35), Colors.transparent], // 透明度从 0.12 飙升到 0.35
     ).createShader(cloud1Rect);
-    canvas.drawCircle(cloud1Offset, 220, cloudPaint);
+    canvas.drawCircle(cloud1Offset, 250, cloudPaint);
 
-    // 星云2：暗白，从右下飘过
+    // 星云2：暗白，加大透明度和体积
     final cloud2Offset = Offset(
-      center.dx + 150 + math.cos(animationValue * math.pi * 2) * 50,
-      center.dy + 200 + math.sin(animationValue * math.pi * 2) * 40,
+      center.dx + 100 + math.cos(animationValue * math.pi * 2) * 70,
+      center.dy + 180 + math.sin(animationValue * math.pi * 2) * 50,
     );
-    final cloud2Rect = Rect.fromCircle(center: cloud2Offset, radius: 260);
+    final cloud2Rect = Rect.fromCircle(center: cloud2Offset, radius: 300);
     cloudPaint.shader = RadialGradient(
-      colors: [Colors.white.withOpacity(0.08), Colors.transparent],
+      colors: [Colors.white.withOpacity(0.25), Colors.transparent], // 透明度从 0.08 提升到 0.25
     ).createShader(cloud2Rect);
-    canvas.drawCircle(cloud2Offset, 260, cloudPaint);
+    canvas.drawCircle(cloud2Offset, 300, cloudPaint);
 
     // 满天繁星
     final starPaint = Paint()..style = PaintingStyle.fill;
