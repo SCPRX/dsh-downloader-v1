@@ -5,7 +5,6 @@ import 'package:flutter/services.dart';
 import 'dart:math' as math;
 
 void main() {
-  // 强制沉浸式全屏，干掉状态栏
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
@@ -54,7 +53,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     _bgController = AnimationController(vsync: this, duration: const Duration(milliseconds: 16))..repeat();
     _bgController.addListener(_updateParticles);
     
-    for (int i = 0; i < 6; i++) { _clouds.add(_spawnCloud()); }
+    for (int i = 0; i < 5; i++) { _clouds.add(_spawnCloud()); }
     for (int i = 0; i < 60; i++) { _stars.add(_spawnStar()); }
 
     platform.setMethodCallHandler((call) async {
@@ -66,12 +65,28 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   }
 
   CloudParticle _spawnCloud() {
+    // 1. 随机决定云团由几个小圆组成 (3 到 6 个)
+    int partCount = 3 + _random.nextInt(4);
+    List<CloudPart> parts = [];
+    
+    // 2. 随机生成每个小圆的相对位置和大小
+    for (int i = 0; i < partCount; i++) {
+      parts.add(CloudPart(
+        dx: (_random.nextDouble() - 0.5) * 1.5, // 水平相对偏移
+        dy: (_random.nextDouble() - 0.5) * 0.8, // 垂直相对偏移
+        radiusMultiplier: 0.5 + _random.nextDouble() * 0.6, // 相对大小
+      ));
+    }
+
+    // 3. 在屏幕外侧很远的地方生成，这样飘进来绝对丝滑
+    bool fromLeft = _random.nextBool();
     return CloudParticle(
-      x: _random.nextBool() ? -0.6 : 1.6, 
+      x: fromLeft ? -1.2 : 1.2, 
       y: _random.nextDouble() * 0.8 + 0.1, 
-      radius: 0.25 + _random.nextDouble() * 0.2, 
-      opacity: 0.15 + _random.nextDouble() * 0.15, 
-      vx: (_random.nextBool() ? 1 : -1) * (0.0005 + _random.nextDouble() * 0.0005), 
+      radius: 0.25 + _random.nextDouble() * 0.15, 
+      opacity: 0.1 + _random.nextDouble() * 0.1, 
+      vx: (fromLeft ? 1 : -1) * (0.0003 + _random.nextDouble() * 0.0003), 
+      parts: parts,
     );
   }
 
@@ -86,13 +101,21 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   void _updateParticles() {
     if (!mounted) return;
     setState(() {
+      // 星星生灭
       for (int i = _stars.length - 1; i >= 0; i--) {
         var star = _stars[i]; star.life += 1;
         if (star.life > star.maxLife) { _stars[i] = _spawnStar(); }
       }
+      
+      // 云团飘动
       for (int i = _clouds.length - 1; i >= 0; i--) {
-        var cloud = _clouds[i]; cloud.x += cloud.vx;
-        if (cloud.x < -1.0 || cloud.x > 2.0) { _clouds[i] = _spawnCloud(); }
+        var cloud = _clouds[i]; 
+        cloud.x += cloud.vx;
+        
+        // 只有完全彻底飘出屏幕很远后，才回收并重新生成，防止边缘突变
+        if (cloud.x < -1.5 || cloud.x > 1.5) { 
+          _clouds[i] = _spawnCloud(); 
+        }
       }
     });
   }
@@ -127,7 +150,6 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
 
   @override
   Widget build(BuildContext context) {
-    // 彻底抛弃 Scaffold，用 Container 铺满
     return Container(
       color: const Color(0xFF03060A), 
       child: !_isReady
@@ -154,8 +176,6 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                         ),
                       ),
                       const SizedBox(height: 40),
-                      
-                      // 🚨 核心修复：彻底屏蔽系统对这段文字的拼写检查、无障碍高亮，并强制没有任何下划线
                       ExcludeSemantics(
                         child: Text(
                           _status, 
@@ -164,8 +184,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                             fontSize: 14.0, 
                             color: Color(0xFF00FFCC), 
                             fontWeight: FontWeight.bold,
-                            decoration: TextDecoration.none, // 强制无下划线
-                            decorationColor: Colors.transparent,
+                            decoration: TextDecoration.none,
                           ),
                         ),
                       ),
@@ -179,14 +198,24 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   }
 }
 
-class StarParticle {
-  double x, y, radius, maxLife, life;
-  StarParticle({required this.x, required this.y, required this.radius, required this.maxLife, required this.life});
+// 云的组成部件
+class CloudPart {
+  final double dx, dy, radiusMultiplier;
+  CloudPart({required this.dx, required this.dy, required this.radiusMultiplier});
 }
 
 class CloudParticle {
   double x, y, radius, opacity, vx;
-  CloudParticle({required this.x, required this.y, required this.radius, required this.opacity, required this.vx});
+  List<CloudPart> parts;
+  CloudParticle({
+    required this.x, required this.y, required this.radius, 
+    required this.opacity, required this.vx, required this.parts
+  });
+}
+
+class StarParticle {
+  double x, y, radius, maxLife, life;
+  StarParticle({required this.x, required this.y, required this.radius, required this.maxLife, required this.life});
 }
 
 class StarryCloudPainter extends CustomPainter {
@@ -196,16 +225,39 @@ class StarryCloudPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final cloudPaint = Paint()..maskFilter = const MaskFilter.blur(BlurStyle.normal, 60.0); 
+    // 1. 绘制云层
+    final cloudPaint = Paint()..maskFilter = const MaskFilter.blur(BlurStyle.normal, 50.0); 
+    
     for (var cloud in clouds) {
       final centerOffset = Offset(cloud.x * size.width, cloud.y * size.height);
       final baseRadius = cloud.radius * size.width;
-      cloudPaint.color = Colors.grey.withOpacity(cloud.opacity);
-      canvas.drawCircle(centerOffset, baseRadius, cloudPaint);
-      canvas.drawCircle(Offset(centerOffset.dx - baseRadius * 0.6, centerOffset.dy + baseRadius * 0.1), baseRadius * 0.7, cloudPaint);
-      canvas.drawCircle(Offset(centerOffset.dx + baseRadius * 0.7, centerOffset.dy - baseRadius * 0.1), baseRadius * 0.8, cloudPaint);
-      canvas.drawCircle(Offset(centerOffset.dx + baseRadius * 0.2, centerOffset.dy - baseRadius * 0.5), baseRadius * 0.6, cloudPaint);
+      
+      // 🚨 核心丝滑算法：动态计算云在屏幕边缘的透明度
+      double edgeAlpha = 1.0;
+      // 刚进来时 (x < 0)：慢慢变清晰
+      if (cloud.x < 0) edgeAlpha = (cloud.x + 1.0) / 1.0;
+      // 快出去时 (x > 0.8)：慢慢变透明
+      if (cloud.x > 0.8) edgeAlpha = (1.8 - cloud.x) / 1.0; 
+      
+      // 限制透明度范围，防止负数
+      edgeAlpha = edgeAlpha.clamp(0.0, 1.0);
+      
+      cloudPaint.color = Colors.grey.withOpacity(cloud.opacity * edgeAlpha);
+      
+      // 根据随机生成的部件，把它们画出来拼成云
+      for (var part in cloud.parts) {
+        canvas.drawCircle(
+          Offset(
+            centerOffset.dx + part.dx * baseRadius, 
+            centerOffset.dy + part.dy * baseRadius
+          ), 
+          baseRadius * part.radiusMultiplier, 
+          cloudPaint
+        );
+      }
     }
+
+    // 2. 绘制星星
     final starPaint = Paint()..style = PaintingStyle.fill;
     for (var star in stars) {
       double lifeProgress = star.life / star.maxLife;
