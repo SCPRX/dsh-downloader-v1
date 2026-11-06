@@ -115,24 +115,24 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('原生 DSH (附魔版)')),
+      appBar: AppBar(title: const Text('原生 DSH')),
       body: !_isReady
           ? Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   
-                  // 🚨 你指定的魔法阵充能版（原封不动）
+                  // 🚨 去掉数字，让圈和图片完美贴合
                   SizedBox(
-                    width: 220.0,
-                    height: 220.0,
+                    width: 210.0,
+                    height: 210.0,
                     child: Stack(
                       alignment: Alignment.center,
                       children: [
-                        // 1. 底层：带附魔特效的落锤图片
+                        // 1. 底层：落锤图片放大到 210
                         SizedBox(
-                          width: 180.0,
-                          height: 180.0,
+                          width: 210.0,
+                          height: 210.0,
                           child: AnimatedBuilder(
                             animation: _enchantController,
                             builder: (context, child) {
@@ -157,31 +157,23 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                           ),
                         ),
                         
-                        // 2. 外层：进度圈
+                        // 2. 外层：进度圈（尺寸调到和图片一样大，加粗），去掉了背景轨道
                         SizedBox(
-                          width: 210.0,
-                          height: 210.0,
+                          width: 208.0, // 稍微比图片小2像素，刚好卡在内侧
+                          height: 208.0,
                           child: CircularProgressIndicator(
                             value: _progress > 0 ? _progress : null,
-                            strokeWidth: 6.0,
-                            backgroundColor: Colors.white12,
-                            color: const Color(0xFFE040FB),
+                            strokeWidth: 8.0, // 加粗，看起来更有力量
+                            backgroundColor: Colors.transparent, // 轨道透明
+                            color: const Color(0xFFFFFFFF), // 进度条用纯白色，或者用 0xFFE040FB 亮紫
                           ),
-                        ),
-                        
-                        // 3. 中心：进度数字
-                        Text(
-                          "${(_progress * 100).toStringAsFixed(1)}%",
-                          style: const TextStyle(
-                              fontSize: 32.0,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white),
                         ),
                       ],
                     ),
                   ),
                   
                   const SizedBox(height: 30.0),
+                  // 这里只保留底部的状态文字提示
                   Text(_status, style: const TextStyle(fontSize: 16.0, color: Colors.orangeAccent)),
                 ],
               ),
