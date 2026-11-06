@@ -58,14 +58,12 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
       if (call.method == 'ready') setState(() => _isReady = true);
     });
     
-    // 模拟初始化
     _start();
   }
 
   void _initRain() {
     for (int i = 0; i < 100; i++) {
-      // 随机生成三层雨滴，营造景深感
-      int layer = _random.nextInt(3); // 0: 远景, 1: 中景, 2: 近景
+      int layer = _random.nextInt(3);
       _raindrops.add(RainDrop(
         x: _random.nextDouble(),
         y: _random.nextDouble(),
@@ -73,7 +71,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
         length: layer == 2 ? 40.0 : (layer == 1 ? 20.0 : 10.0),
         thickness: layer == 2 ? 2.0 : (layer == 1 ? 1.0 : 0.5),
         opacity: layer == 2 ? 0.6 : (layer == 1 ? 0.3 : 0.1),
-        windOffset: -0.2, // 风的倾斜度
+        windOffset: -0.2,
       ));
     }
   }
@@ -83,21 +81,18 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     setState(() {
       for (var drop in _raindrops) {
         drop.y += drop.speed * 0.02;
-        drop.x += drop.windOffset * 0.02; // 受风影响
+        drop.x += drop.windOffset * 0.02;
         if (drop.y > 1.0 || drop.x < 0) {
-          // 落地，生成水花
           if (_splashes.length < 30 && drop.speed > 1.5) {
             _splashes.add(Splash(x: drop.x, y: 0.95));
           }
           drop.y = 0;
-          drop.x = _random.nextDouble() + 0.2; // 重新从偏右上方落下
+          drop.x = _random.nextDouble() + 0.2;
         }
       }
-      
-      // 更新水花
       _splashes.removeWhere((splash) => splash.life <= 0);
       for (var splash in _splashes) {
-        splash.life -= 0.05; // 消散
+        splash.life -= 0.05;
       }
     });
   }
@@ -107,7 +102,6 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     _lightningTimer = Timer(Duration(milliseconds: randomDelay), () {
       if (mounted) {
         setState(() => _isLightningStriking = true);
-        // 真实闪电会有连续闪烁 (双闪)
         Future.delayed(const Duration(milliseconds: 80), () {
           if (mounted) {
             setState(() => _isLightningStriking = false);
@@ -136,13 +130,37 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   }
 
   Future<void> _start() async {
-    // 真实的下载逻辑不变
+    final envFile = File('${Directory.systemTemp.path}/env_data.zip');
+    if (await envFile.exists()) {
+      try { envFile.deleteSync(); } catch(e) {}
+    }
+
+    try {
+      String url = 'https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/env.zip';
+      var request = http.Request('GET', Uri.parse(url));
+      var response = await http.Client().send(request);
+      var contentLength = response.contentLength ?? 0;
+      var received = 0;
+      var sink = envFile.openWrite();
+
+      await response.stream.listen((chunk) {
+        sink.add(chunk);
+        received += chunk.length;
+        if (contentLength > 0) setState(() => _progress = received / contentLength);
+      }).asFuture();
+
+      await sink.close();
+      setState(() => _status = "下载完成，正在解压...");
+      platform.invokeMethod('startExtract', {'path': envFile.path});
+    } catch (e) {
+      setState(() => _status = "下载失败: $e");
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF05070A), // 暴风雨夜空底色
+      backgroundColor: const Color(0xFF05070A),
       appBar: AppBar(
         title: const Text('原生 DSH'),
         backgroundColor: Colors.transparent,
@@ -152,20 +170,63 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
       body: !_isReady
           ? Stack(
               children: [
-                // 1. 底层：落锤与积水倒影
-                Positioned.fill(
-                  child: CustomPaint(
-                    painter: GroundReflectionPainter(
-                      progress: _progress,
-                      isStriking: _isLightningStriking,
-                    ),
-                  ),
-                ),
-
-                // 2. 中层：暴雨粒子
+                // 1. 底层：暴雨粒子
                 Positioned.fill(
                   child: CustomPaint(
                     painter: RainPainter(_raindrops, _splashes),
+                  ),
+                ),
+
+                // 2. 中层：落锤、倒影与进度圈 (剥离出独立UI，防止冲突)
+                Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          // 真实的落锤图片 (雷击时爆亮)
+                          Image.asset(
+                            'assets/logo.png',
+                            width: 140.0,
+                            height: 140.0,
+                            fit: BoxFit.contain,
+                            color: _isLightningStriking ? Colors.white : Colors.white70,
+                            colorBlendMode: BlendMode.srcIn,
+                          ),
+                          // 进度圈
+                          SizedBox(
+                            width: 200.0,
+                            height: 200.0,
+                            child: CircularProgressIndicator(
+                              value: _progress > 0 ? _progress : null,
+                              strokeWidth: 4.0,
+                              backgroundColor: Colors.white12,
+                              color: const Color(0xFF00FFCC),
+                            ),
+                          ),
+                        ],
+                      ),
+                      
+                      // 水面倒影 (使用 Transform 翻转，透明度递减)
+                      Transform(
+                        transform: Matrix4.identity()
+                          ..scale(1.0, -0.6) // Y轴翻转并压缩
+                          ..translate(0.0, -100.0), // 调整倒影位置
+                        alignment: Alignment.topCenter,
+                        child: Opacity(
+                          opacity: 0.15, // 倒影半透明
+                          child: Image.asset(
+                            'assets/logo.png',
+                            width: 140.0,
+                            height: 140.0,
+                            fit: BoxFit.contain,
+                            color: const Color(0xFF00FFCC), // 倒影偏青绿
+                            colorBlendMode: BlendMode.srcIn,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
 
@@ -227,14 +288,12 @@ class RainPainter extends CustomPainter {
         ..strokeWidth = drop.thickness
         ..strokeCap = StrokeCap.round;
       
-      // 只有近景的雨滴加模糊，模拟真实镜头景深
       if (drop.thickness == 2.0) {
         paint.maskFilter = const MaskFilter.blur(BlurStyle.normal, 1.0);
       }
 
       final startX = drop.x * size.width;
       final startY = drop.y * size.height;
-      // 根据风偏计算终点
       final endX = startX - (drop.length * drop.windOffset);
       final endY = startY + drop.length;
 
@@ -248,13 +307,12 @@ class RainPainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.0;
       
-      // 水花砸地的椭圆涟漪，迅速扩大并消散
       double radius = (1.0 - splash.life) * 30;
       canvas.drawOval(
         Rect.fromCenter(
           center: Offset(splash.x * size.width, splash.y * size.height),
           width: radius * 2.5,
-          height: radius * 0.8, // 压扁，模拟地面视角
+          height: radius * 0.8,
         ),
         splashPaint
       );
@@ -262,73 +320,6 @@ class RainPainter extends CustomPainter {
   }
   @override
   bool shouldRepaint(covariant RainPainter oldDelegate) => true;
-}
-
-// 🪞 湿滑地面与落锤倒影
-class GroundReflectionPainter extends CustomPainter {
-  final double progress;
-  final bool isStriking;
-  GroundReflectionPainter({required this.progress, required this.isStriking});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final center = Offset(size.width / 2, size.height / 2 - 20);
-
-    // 1. 地面湿滑反光（落锤下方的一滩积水）
-    final puddlePaint = Paint()
-      ..shader = RadialGradient(
-        colors: [Colors.cyanAccent.withOpacity(0.15), Colors.transparent],
-      ).createShader(Rect.fromCircle(center: Offset(center.dx, size.height * 0.8), radius: 150));
-    canvas.drawCircle(Offset(center.dx, size.height * 0.8), 150, puddlePaint);
-
-    // 2. 倒影 (通过翻转画布和透明度实现)
-    canvas.save();
-    canvas.translate(0, size.height * 0.8); // 移到水面位置
-    canvas.scale(1.0, -0.6); // Y轴翻转并按比例压缩，产生透视感
-    final opacity = isStriking ? 1.0 : 0.2;
-    
-    // 画倒影中的落锤
-    final logoPaint = Paint()
-      ..color = Colors.white.withOpacity(opacity * 0.3)
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5.0);
-    // 注意：这里用一张带圆形的底色模拟倒影，实际中可以用 Image.asset
-    canvas.drawCircle(Offset(0, -120), 70, logoPaint); 
-    canvas.restore();
-
-    // 3. 画真实的落锤
-    final logoColor = isStriking ? Colors.white : const Color(0xFFAAAAAA);
-    final logoPaint = Paint()
-      ..color = logoColor
-      ..maskFilter = isStriking ? const MaskFilter.blur(BlurStyle.normal, 10.0) : null;
-    // (为了代码简洁，落锤这里用圆圈代替，你的实际代码里应该用 Image.asset('assets/logo.png'))
-    canvas.drawCircle(center, 70, logoPaint);
-    
-    // 画进度圈
-    final trackPaint = Paint()
-      ..color = Colors.white12
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 4.0;
-    canvas.drawCircle(center, 90, trackPaint);
-
-    final progressPaint = Paint()
-      ..color = const Color(0xFF00FFCC)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 6.0
-      ..strokeCap = StrokeCap.round
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4.0);
-    
-    if (progress > 0) {
-      canvas.drawArc(
-        Rect.fromCircle(center: center, radius: 90),
-        -math.pi / 2,
-        progress * 2 * math.pi,
-        false,
-        progressPaint,
-      );
-    }
-  }
-  @override
-  bool shouldRepaint(covariant GroundReflectionPainter oldDelegate) => true;
 }
 
 // ⚡ 撕裂天空的真实闪电
@@ -344,16 +335,15 @@ class RealLightningPainter extends CustomPainter {
 
     // 2. 闪电主干（随机落在屏幕任意位置）
     final startX = random.nextDouble() * size.width;
-    final endY = size.height * (0.3 + random.nextDouble() * 0.5); // 劈到屏幕中部
+    final endY = size.height * (0.3 + random.nextDouble() * 0.5);
 
     final boltPaint = Paint()
-      ..color = const Color(0xFFF0F8FF) // 亮青白色
+      ..color = const Color(0xFFF0F8FF)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2.0
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.miter;
 
-    // 极度明亮的发光层
     final glowPaint = Paint()
       ..color = const Color(0xFF00FFCC)
       ..style = PaintingStyle.stroke
@@ -363,9 +353,8 @@ class RealLightningPainter extends CustomPainter {
     _drawBolt(canvas, Offset(startX, 0), endY, boltPaint, glowPaint, 0);
   }
 
-  // 递归画闪电及分叉
   void _drawBolt(Canvas canvas, Offset start, double endY, Paint bolt, Paint glow, int depth) {
-    if (depth > 2) return; // 限制递归深度防卡顿
+    if (depth > 2) return;
 
     final path = Path()..moveTo(start.dx, start.dy);
     double currentX = start.dx;
@@ -374,11 +363,9 @@ class RealLightningPainter extends CustomPainter {
     while (currentY < endY) {
       currentY += 20 + random.nextDouble() * 30;
       if (currentY > endY) currentY = endY;
-      // 左右横跳幅度随深度递减
       currentX += (random.nextDouble() - 0.5) * (depth == 0 ? 60 : 30);
       path.lineTo(currentX, currentY);
 
-      // 随机产生分叉
       if (random.nextDouble() > 0.7 && depth < 2) {
         _drawBolt(canvas, Offset(currentX, currentY), currentY + 80, bolt, glow, depth + 1);
       }
