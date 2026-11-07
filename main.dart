@@ -71,6 +71,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   bool _busy = false;
   bool _downloading = false;
   String _speed = "";
+  String _curName = "";
 
   int? _pinnedSrc; // null = 自动按顺序找源；点按钮后固定用那一个
   int _runId = 0; // 手动换源时 +1，打断正在进行的下载
@@ -269,11 +270,14 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
           lastError = _SourceCancelled('换源');
           break;
         }
-        setState(() => _speed = "");
+        setState(() {
+          _speed = "";
+          _curName = _envNames[i];
+        });
         try {
           await _downloadFrom(i, runId, part, start: start);
           lastError = null;
-          _srcInfo[i] = "✓";
+          _srcInfo[i] = "✓ 可用";
           break;
         } catch (e) {
           lastError = e;
@@ -364,9 +368,9 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
             setState(() {
               _progress = (received / totalBytes).clamp(0.0, 1.0).toDouble();
               _speed = _speedText(bps);
+              _curName = name;
               _srcInfo[index] = _speed;
-              _status =
-                  "下载中 ${_mb(received)} / ${_mb(totalBytes)}（$name）";
+              _status = "下载中 ${_mb(received)} / ${_mb(totalBytes)}";
             });
           }
 
@@ -566,16 +570,30 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                           style: TextStyle(color: Color(0xFF00FFCC))),
                     ),
                   ],
-                  const SizedBox(height: 24),
-                  // 下载源手动切换：点一下换一个源，「自动」恢复按顺序找
-                  Wrap(
-                    alignment: WrapAlignment.center,
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      _srcChip(-1),
-                      for (int i = 0; i < _envNames.length; i++) _srcChip(i),
-                    ],
+                  const SizedBox(height: 12),
+                  ExcludeSemantics(
+                    child: Text(
+                      _curName.isEmpty
+                          ? ""
+                          : "$_curName · ${_speed.isEmpty ? "连接中..." : _speed}",
+                      textAlign: TextAlign.center,
+                      style:
+                          const TextStyle(color: Colors.white60, fontSize: 13),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  OutlinedButton.icon(
+                    onPressed: _showSourceSheet,
+                    icon: const Icon(Icons.swap_horiz,
+                        size: 16, color: Color(0xFF00FFCC)),
+                    label: const Text("换源",
+                        style:
+                            TextStyle(color: Color(0xFF00FFCC), fontSize: 14)),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: Color(0x4400FFCC)),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20)),
+                    ),
                   ),
                 ],
               ),
@@ -586,28 +604,70 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     );
   }
 
-  Widget _srcChip(int i) {
-    final isAuto = i == -1;
-    final bool selected = isAuto ? _pinnedSrc == null : _pinnedSrc == i;
-    final String label;
-    if (isAuto) {
-      label = "自动";
-    } else {
-      final info = _srcInfo[i];
-      label = _envNames[i] + (info == null || info.isEmpty ? "" : " $info");
-    }
-    return ActionChip(
-      onPressed: isAuto ? _setAuto : () => _switchSource(i),
-      label: Text(label,
-          style: TextStyle(
-              fontSize: 12,
-              color: selected ? Colors.black : const Color(0xFF00FFCC))),
-      backgroundColor: selected ? const Color(0xFF00FFCC) : Colors.white10,
-      side: BorderSide(
-          color: selected ? const Color(0xFF00FFCC) : Colors.white24),
-      visualDensity: VisualDensity.compact,
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
+  /// 底部弹出的换源面板：每个源一行，显示最近状态，点一下立即切换
+  void _showSourceSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF0B1220),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(20, 16, 20, 8),
+                  child: Text("选择下载源（点一下立即切换）",
+                      style: TextStyle(color: Colors.white, fontSize: 15)),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.autorenew, color: Color(0xFF00FFCC)),
+                  title: const Text("自动",
+                      style: TextStyle(color: Colors.white)),
+                  subtitle: const Text("按顺序自动找最快的源",
+                      style: TextStyle(color: Colors.white38, fontSize: 12)),
+                  trailing: _pinnedSrc == null
+                      ? const Icon(Icons.check_circle, color: Color(0xFF00FFCC))
+                      : null,
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _setAuto();
+                  },
+                ),
+                for (int i = 0; i < _envNames.length; i++)
+                  ListTile(
+                    leading: Icon(Icons.link,
+                        size: 20,
+                        color: const Color(0xFF00FFCC).withOpacity(0.8)),
+                    title: Text(_envNames[i],
+                        style: const TextStyle(color: Colors.white)),
+                    subtitle: Text(_srcSubtitle(i),
+                        style: const TextStyle(
+                            color: Colors.white38, fontSize: 12)),
+                    trailing: _pinnedSrc == i
+                        ? const Icon(Icons.check_circle,
+                            color: Color(0xFF00FFCC))
+                        : null,
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      _switchSource(i);
+                    },
+                  ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+        );
+      },
     );
+  }
+
+  String _srcSubtitle(int i) {
+    final info = _srcInfo[i];
+    return (info == null || info.isEmpty) ? "未测" : info;
   }
 }
 
