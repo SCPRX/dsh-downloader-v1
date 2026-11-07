@@ -39,13 +39,14 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateMixin {
   static const MethodChannel _platform = MethodChannel('com.dsh.dshapp/status');
 
-  /// 下载源按顺序尝试：主源是 GitHub，后面是 ghproxy 类镜像（国内可直连）。
-  /// 某个源挂了就把那一行换掉或删掉；以后自己传了 OSS/R2 直接排在第一位。
+  /// 下载源按顺序尝试（我在这台手机上实测过速度）：
+  /// gh-proxy.com ~10MB/s；ghfast.top ~670KB/s；GitHub 直连 ~30KB/s 且要梯子。
+  /// 某个源挂了/太慢会自动跳过；以后自己传了 OSS/R2 直接排在第一位。
   static const List<String> _envUrls = [
-    'https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/env.zip',
-    'https://ghfast.top/https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/env.zip',
     'https://gh-proxy.com/https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/env.zip',
+    'https://ghfast.top/https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/env.zip',
     'https://mirror.ghproxy.com/https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/env.zip',
+    'https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/env.zip',
   ];
 
   String _status = "正在检查环境...";
@@ -285,7 +286,9 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
       }
 
       final done = Completer<void>();
-      final sub = resp.stream.listen(
+      final sw = Stopwatch()..start();
+      late final StreamSubscription<List<int>> sub;
+      sub = resp.stream.listen(
         (chunk) {
           sink.add(chunk);
           received += chunk.length;
@@ -300,6 +303,13 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                   "下载中 ${_mb(received)} / ${_mb(totalBytes)}（源 $index/$total）";
             });
           }
+          // 20 秒连 1MB 都下不到 = 源太慢，放弃换下一个（已下的会保留续传）
+          final ms = sw.elapsedMilliseconds;
+          if (ms > 20000 && received < 1024 * 1024 && !done.isCompleted) {
+            sub.cancel();
+            done.completeError(
+                Exception('该源太慢（约 ${_kb(received * 1000 ~/ ms)}），换下一个'));
+          }
         },
         onError: (Object e) {
           if (!done.isCompleted) done.completeError(e);
@@ -310,9 +320,12 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
         cancelOnError: true,
       );
 
-      await done.future;
-      await sub.cancel();
-      await sink.close();
+      try {
+        await done.future;
+      } finally {
+        await sub.cancel();
+        await sink.close();
+      }
 
       if (totalBytes > 0 && received < totalBytes) {
         throw '下载不完整（${_mb(received)} / ${_mb(totalBytes)}），重试会接着下';
@@ -330,6 +343,9 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   }
 
   String _mb(int bytes) => "${(bytes / 1024 / 1024).toStringAsFixed(0)} MB";
+
+  String _kb(int bytesPerSec) =>
+      "${(bytesPerSec / 1024).toStringAsFixed(0)} KB/s";
 
   // ---------------- UI ----------------
 
