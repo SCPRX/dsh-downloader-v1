@@ -21,8 +21,6 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      // 关掉系统拼写检查，避免文字下面被画黄线
-      spellCheckConfiguration: SpellCheckConfiguration.disabled(),
       theme: ThemeData(
           useMaterial3: true,
           colorScheme: ColorScheme.fromSeed(
