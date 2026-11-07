@@ -21,6 +21,8 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
+      // 关掉系统拼写检查，避免文字下面被画黄线
+      spellCheckConfiguration: SpellCheckConfiguration.disabled(),
       theme: ThemeData(
           useMaterial3: true,
           colorScheme: ColorScheme.fromSeed(
@@ -52,7 +54,6 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   static const List<String> _envUrls = [
     'https://gh-proxy.com/https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/env.zip',
     'https://ghfast.top/https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/env.zip',
-    'https://mirror.ghproxy.com/https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/env.zip',
     'https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/env.zip',
   ];
 
@@ -60,7 +61,6 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   static const List<String> _envNames = [
     'gh-proxy',
     'ghfast',
-    'ghproxy镜像',
     'GitHub',
   ];
 
@@ -202,6 +202,8 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
       if (zipPath == null || zipPath.isEmpty) {
         throw '拿不到安装包路径';
       }
+      // 一进来就后台探测各源速度，把「换源」列表填满
+      if (_srcInfo.isEmpty) unawaited(_testSources());
       await _download(zipPath);
       setState(() {
         _progress = 1.0;
@@ -430,6 +432,48 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     return "失败";
   }
 
+  // ---------------- 源测速 ----------------
+
+  /// 对每个源做一次小流量探速（只拉 256KB），把结果填进换源列表
+  Future<void> _testSources({VoidCallback? onUpdate}) async {
+    for (int i = 0; i < _envUrls.length; i++) {
+      if (mounted) setState(() => _srcInfo[i] = "测试中...");
+      onUpdate?.call();
+      final res = await _probeSource(i);
+      if (mounted) setState(() => _srcInfo[i] = res);
+      onUpdate?.call();
+    }
+  }
+
+  Future<String> _probeSource(int i) async {
+    final client = http.Client();
+    try {
+      final sw = Stopwatch()..start();
+      final req = http.Request('GET', Uri.parse(_envUrls[i]));
+      req.headers['range'] = 'bytes=0-262143';
+      final resp = await client.send(req).timeout(const Duration(seconds: 10));
+      final code = resp.statusCode;
+      int got = 0;
+      try {
+        await for (final chunk
+            in resp.stream.timeout(const Duration(seconds: 10))) {
+          got += chunk.length;
+          if (got >= 262144) break;
+        }
+      } catch (_) {
+        // 超时/中断：下面按 got 的大小判断
+      }
+      if (code != 200 && code != 206) return "失败";
+      if (got < 1024) return "连不上";
+      final bps = got * 1000 ~/ math.max(sw.elapsedMilliseconds, 1);
+      return "≈${_speedText(bps)}";
+    } catch (_) {
+      return "连不上";
+    } finally {
+      client.close();
+    }
+  }
+
   // ---------------- 手动换源 ----------------
 
   void _setAuto() {
@@ -613,53 +657,74 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
       builder: (ctx) {
-        return SafeArea(
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(20, 16, 20, 8),
-                  child: Text("选择下载源（点一下立即切换）",
-                      style: TextStyle(color: Colors.white, fontSize: 15)),
+        return StatefulBuilder(
+          builder: (ctx, setSheet) {
+            return SafeArea(
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 16, 12, 8),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text("选择下载源（点一下立即切换）",
+                              style:
+                                  TextStyle(color: Colors.white, fontSize: 15)),
+                          TextButton.icon(
+                            onPressed: () =>
+                                _testSources(onUpdate: () => setSheet(() {})),
+                            icon: const Icon(Icons.refresh,
+                                size: 16, color: Color(0xFF00FFCC)),
+                            label: const Text("重新测速",
+                                style: TextStyle(
+                                    color: Color(0xFF00FFCC), fontSize: 13)),
+                          ),
+                        ],
+                      ),
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.autorenew,
+                          color: Color(0xFF00FFCC)),
+                      title: const Text("自动",
+                          style: TextStyle(color: Colors.white)),
+                      subtitle: const Text("按顺序自动找最快的源",
+                          style: TextStyle(color: Colors.white38, fontSize: 12)),
+                      trailing: _pinnedSrc == null
+                          ? const Icon(Icons.check_circle,
+                              color: Color(0xFF00FFCC))
+                          : null,
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        _setAuto();
+                      },
+                    ),
+                    for (int i = 0; i < _envNames.length; i++)
+                      ListTile(
+                        leading: Icon(Icons.link,
+                            size: 20,
+                            color: const Color(0xFF00FFCC).withOpacity(0.8)),
+                        title: Text(_envNames[i],
+                            style: const TextStyle(color: Colors.white)),
+                        subtitle: Text(_srcSubtitle(i),
+                            style: const TextStyle(
+                                color: Colors.white38, fontSize: 12)),
+                        trailing: _pinnedSrc == i
+                            ? const Icon(Icons.check_circle,
+                                color: Color(0xFF00FFCC))
+                            : null,
+                        onTap: () {
+                          Navigator.pop(ctx);
+                          _switchSource(i);
+                        },
+                      ),
+                    const SizedBox(height: 8),
+                  ],
                 ),
-                ListTile(
-                  leading: const Icon(Icons.autorenew, color: Color(0xFF00FFCC)),
-                  title: const Text("自动",
-                      style: TextStyle(color: Colors.white)),
-                  subtitle: const Text("按顺序自动找最快的源",
-                      style: TextStyle(color: Colors.white38, fontSize: 12)),
-                  trailing: _pinnedSrc == null
-                      ? const Icon(Icons.check_circle, color: Color(0xFF00FFCC))
-                      : null,
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    _setAuto();
-                  },
-                ),
-                for (int i = 0; i < _envNames.length; i++)
-                  ListTile(
-                    leading: Icon(Icons.link,
-                        size: 20,
-                        color: const Color(0xFF00FFCC).withOpacity(0.8)),
-                    title: Text(_envNames[i],
-                        style: const TextStyle(color: Colors.white)),
-                    subtitle: Text(_srcSubtitle(i),
-                        style: const TextStyle(
-                            color: Colors.white38, fontSize: 12)),
-                    trailing: _pinnedSrc == i
-                        ? const Icon(Icons.check_circle,
-                            color: Color(0xFF00FFCC))
-                        : null,
-                    onTap: () {
-                      Navigator.pop(ctx);
-                      _switchSource(i);
-                    },
-                  ),
-                const SizedBox(height: 8),
-              ],
-            ),
-          ),
+              ),
+            );
+          },
         );
       },
     );
