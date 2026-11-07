@@ -76,6 +76,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   int? _pinnedSrc; // null = 自动按顺序找源；点按钮后固定用那一个
   int _runId = 0; // 手动换源时 +1，打断正在进行的下载
   final Map<int, String> _srcInfo = {}; // 每个源最近的状态/速度
+  final Map<int, double> _srcBps = {}; // 每个源最近测到的字节/秒，用于自动排序
 
   late AnimationController _bgController;
   final math.Random _random = math.Random();
@@ -260,9 +261,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     });
 
     final runId = _runId;
-    final order = _pinnedSrc != null
-        ? <int>[_pinnedSrc!]
-        : <int>[for (int i = 0; i < _envUrls.length; i++) i];
+    final order = _pinnedSrc != null ? <int>[_pinnedSrc!] : _autoOrder();
 
     Object? lastError;
     _downloading = true;
@@ -434,15 +433,25 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
 
   // ---------------- 源测速 ----------------
 
-  /// 对每个源做一次小流量探速（只拉 256KB），把结果填进换源列表
+  /// 自动模式下按最近实测速度从快到慢排，测过的优先，没测过的排最后
+  List<int> _autoOrder() {
+    final ids = <int>[for (int i = 0; i < _envUrls.length; i++) i];
+    ids.sort((a, b) => (_srcBps[b] ?? -1).compareTo(_srcBps[a] ?? -1));
+    return ids;
+  }
+
+  /// 所有源同时开测（并行），谁先测完谁先显示
   Future<void> _testSources({VoidCallback? onUpdate}) async {
+    final jobs = <Future<void>>[];
     for (int i = 0; i < _envUrls.length; i++) {
       if (mounted) setState(() => _srcInfo[i] = "测试中...");
       onUpdate?.call();
-      final res = await _probeSource(i);
-      if (mounted) setState(() => _srcInfo[i] = res);
-      onUpdate?.call();
+      jobs.add(_probeSource(i).then((res) {
+        if (mounted) setState(() => _srcInfo[i] = res);
+        onUpdate?.call();
+      }));
     }
+    await Future.wait(jobs);
   }
 
   Future<String> _probeSource(int i) async {
@@ -463,11 +472,19 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
       } catch (_) {
         // 超时/中断：下面按 got 的大小判断
       }
-      if (code != 200 && code != 206) return "失败";
-      if (got < 1024) return "连不上";
+      if (code != 200 && code != 206) {
+        _srcBps[i] = -1;
+        return "失败";
+      }
+      if (got < 1024) {
+        _srcBps[i] = -1;
+        return "连不上";
+      }
       final bps = got * 1000 ~/ math.max(sw.elapsedMilliseconds, 1);
+      _srcBps[i] = bps.toDouble();
       return "≈${_speedText(bps)}";
     } catch (_) {
+      _srcBps[i] = -1;
       return "连不上";
     } finally {
       client.close();
@@ -763,7 +780,7 @@ class _NoSemText extends StatelessWidget {
           textDirection: TextDirection.ltr,
           maxLines: 3,
           ellipsis: '…',
-        )..layout(maxWidth: c.maxWidth);
+        )..layout(minWidth: c.maxWidth, maxWidth: c.maxWidth);
         return CustomPaint(
           size: Size(c.maxWidth, tp.height),
           painter: _TextDrawPainter(text, style),
@@ -786,7 +803,7 @@ class _TextDrawPainter extends CustomPainter {
       textDirection: TextDirection.ltr,
       maxLines: 3,
       ellipsis: '…',
-    )..layout(maxWidth: size.width);
+    )..layout(minWidth: size.width, maxWidth: size.width);
     tp.paint(canvas, Offset.zero);
   }
 
