@@ -37,8 +37,13 @@ class MainActivity : FlutterActivity() {
     private val workDir: File get() = File(envDir, "deepseek-harness")
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
+        // 必须在 super.onCreate 之前设置，让 Flutter 内容铺满整个窗口（含状态栏区域），
+        // 这样星空背景能一直画到屏幕最顶端，不会留黑边
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        super.onCreate(savedInstanceState)
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        window.navigationBarColor = android.graphics.Color.TRANSPARENT
+        window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(0xFF03060A))
         val controller = WindowInsetsControllerCompat(window, window.decorView)
         controller.hide(WindowInsetsCompat.Type.systemBars())
         controller.systemBarsBehavior =
