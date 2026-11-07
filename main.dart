@@ -36,11 +36,18 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
+/// 手动换源时用来打断正在进行的下载
+class _SourceCancelled implements Exception {
+  final String message;
+  _SourceCancelled(this.message);
+  @override
+  String toString() => message;
+}
+
 class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateMixin {
   static const MethodChannel _platform = MethodChannel('com.dsh.dshapp/status');
 
-  /// 下载源按顺序尝试（我在这台手机上实测过速度）：
-  /// gh-proxy.com ~10MB/s；ghfast.top ~670KB/s；GitHub 直连 ~30KB/s 且要梯子。
+  /// 下载源按顺序尝试（实测：gh-proxy ~10MB/s；ghfast ~670KB/s；GitHub ~30KB/s 且要梯子）。
   /// 某个源挂了/太慢会自动跳过；以后自己传了 OSS/R2 直接排在第一位。
   static const List<String> _envUrls = [
     'https://gh-proxy.com/https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/env.zip',
@@ -49,14 +56,27 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     'https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/env.zip',
   ];
 
+  /// 按钮上显示的名字，和上面的地址一一对应
+  static const List<String> _envNames = [
+    'gh-proxy',
+    'ghfast',
+    'ghproxy镜像',
+    'GitHub',
+  ];
+
   String _status = "正在检查环境...";
   double _progress = 0.0;
   bool _isReady = false;
   bool _failed = false;
   bool _busy = false;
+  bool _downloading = false;
+  String _speed = "";
+
+  int? _pinnedSrc; // null = 自动按顺序找源；点按钮后固定用那一个
+  int _runId = 0; // 手动换源时 +1，打断正在进行的下载
+  final Map<int, String> _srcInfo = {}; // 每个源最近的状态/速度
 
   late AnimationController _bgController;
-  final double logoSize = 160.0;
   final math.Random _random = math.Random();
   DateTime _lastProgressPaint = DateTime.fromMillisecondsSinceEpoch(0);
 
@@ -187,6 +207,18 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
         _status = "下载完成，正在解压(耗时较长)...";
       });
       await _platform.invokeMethod('startExtract', {'path': zipPath});
+    } on _SourceCancelled {
+      // 手动换源：被打断后按新选的源自动重启
+      setState(() {
+        _failed = false;
+        _speed = "";
+        _status = _pinnedSrc != null
+            ? "切换到 ${_envNames[_pinnedSrc!]} 下载..."
+            : "恢复自动找源...";
+      });
+      _busy = false;
+      Future(() => _start());
+      return;
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -198,7 +230,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     }
   }
 
-  /// 多源 + 断点续传下载：源挂了自动换下一个，断了重进会接着下。
+  /// 多源 + 断点续传下载：源挂了/太慢自动换下一个，断了重进会接着下。
   Future<void> _download(String zipPath) async {
     final zip = File(zipPath);
     final part = File('$zipPath.part');
@@ -224,41 +256,62 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
           : "首次启动，正在下载核心环境(约 850MB)...";
     });
 
+    final runId = _runId;
+    final order = _pinnedSrc != null
+        ? <int>[_pinnedSrc!]
+        : <int>[for (int i = 0; i < _envUrls.length; i++) i];
+
     Object? lastError;
-    for (int i = 0; i < _envUrls.length; i++) {
-      try {
-        await _downloadFrom(_envUrls[i], i + 1, _envUrls.length, part,
-            start: start);
-        lastError = null;
-        break;
-      } catch (e) {
-        lastError = e;
-        if (await part.exists()) start = await part.length();
-        if (i + 1 < _envUrls.length && mounted) {
-          setState(() => _status = "源 ${i + 1} 失败，换第 ${i + 2} 个源继续...");
+    _downloading = true;
+    try {
+      for (final i in order) {
+        if (runId != _runId) {
+          lastError = _SourceCancelled('换源');
+          break;
+        }
+        setState(() => _speed = "");
+        try {
+          await _downloadFrom(i, runId, part, start: start);
+          lastError = null;
+          _srcInfo[i] = "✓";
+          break;
+        } catch (e) {
+          lastError = e;
+          if (e is _SourceCancelled) break;
+          _srcInfo[i] = _srcReason(e);
+          if (await part.exists()) start = await part.length();
+          final next = order.indexOf(i) + 1;
+          if (next < order.length && mounted) {
+            setState(() =>
+                _status = "${_envNames[i]} 不行（${_srcReason(e)}），换 ${_envNames[order[next]]}...");
+          }
         }
       }
-    }
-    if (lastError != null) throw lastError;
+      if (lastError != null) throw lastError;
 
-    // 简单校验：zip 头是 PK
-    final bool partOk = await part.exists() && await part.length() >= 1024;
-    if (!partOk) {
-      throw '下载文件不存在或不完整';
-    }
-    final head = await part.openRead(0, 2).first;
-    if (head.length < 2 || head[0] != 0x50 || head[1] != 0x4B) {
-      await part.delete();
-      throw '下载到的不是 zip 文件，已删除，请重试';
-    }
+      // 简单校验：zip 头是 PK
+      final bool partOk = await part.exists() && await part.length() >= 1024;
+      if (!partOk) {
+        throw '下载文件不存在或不完整';
+      }
+      final head = await part.openRead(0, 2).first;
+      if (head.length < 2 || head[0] != 0x50 || head[1] != 0x4B) {
+        await part.delete();
+        throw '下载到的不是 zip 文件，已删除，请重试';
+      }
 
-    if (await zip.exists()) await zip.delete();
-    await part.rename(zip.path);
+      if (await zip.exists()) await zip.delete();
+      await part.rename(zip.path);
+    } finally {
+      _downloading = false;
+    }
   }
 
   /// 从一个源下载；成功返回，失败抛异常（.part 保留，供续传/换源）。
-  Future<void> _downloadFrom(
-      String url, int index, int total, File part, {required int start}) async {
+  Future<void> _downloadFrom(int index, int runId, File part,
+      {required int start}) async {
+    final url = _envUrls[index];
+    final name = _envNames[index];
     final client = http.Client();
     try {
       final req = http.Request('GET', Uri.parse(url));
@@ -290,8 +343,19 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
       late final StreamSubscription<List<int>> sub;
       sub = resp.stream.listen(
         (chunk) {
+          // 手动换源 → 立刻打断
+          if (runId != _runId) {
+            sub.cancel();
+            if (!done.isCompleted) {
+              done.completeError(_SourceCancelled('换源'));
+            }
+            return;
+          }
           sink.add(chunk);
           received += chunk.length;
+          final ms = sw.elapsedMilliseconds;
+          final bps = ms > 1000 ? received * 1000 ~/ ms : 0;
+
           final now = DateTime.now();
           if (totalBytes > 0 &&
               now.difference(_lastProgressPaint).inMilliseconds > 250 &&
@@ -299,16 +363,18 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
             _lastProgressPaint = now;
             setState(() {
               _progress = (received / totalBytes).clamp(0.0, 1.0).toDouble();
+              _speed = _speedText(bps);
+              _srcInfo[index] = _speed;
               _status =
-                  "下载中 ${_mb(received)} / ${_mb(totalBytes)}（源 $index/$total）";
+                  "下载中 ${_mb(received)} / ${_mb(totalBytes)}（$name）";
             });
           }
-          // 20 秒连 1MB 都下不到 = 源太慢，放弃换下一个（已下的会保留续传）
-          final ms = sw.elapsedMilliseconds;
-          if (ms > 20000 && received < 1024 * 1024 && !done.isCompleted) {
+
+          // 20 秒后仍低于 50KB/s = 源太慢，放弃换下一个（已下的会保留续传）
+          if (ms > 20000 && bps < 50 * 1024 && !done.isCompleted) {
             sub.cancel();
             done.completeError(
-                Exception('该源太慢（约 ${_kb(received * 1000 ~/ ms)}），换下一个'));
+                Exception('该源太慢（${_speedText(bps)}），换下一个'));
           }
         },
         onError: (Object e) {
@@ -344,8 +410,47 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
 
   String _mb(int bytes) => "${(bytes / 1024 / 1024).toStringAsFixed(0)} MB";
 
-  String _kb(int bytesPerSec) =>
-      "${(bytesPerSec / 1024).toStringAsFixed(0)} KB/s";
+  String _speedText(int bps) {
+    if (bps <= 0) return "";
+    if (bps >= 1024 * 1024) {
+      return "${(bps / 1024 / 1024).toStringAsFixed(1)} MB/s";
+    }
+    return "${(bps / 1024).toStringAsFixed(0)} KB/s";
+  }
+
+  String _srcReason(Object e) {
+    final s = e.toString();
+    if (e is _SourceCancelled) return "已取消";
+    if (s.contains("太慢")) return "太慢";
+    if (s.contains("HTTP")) return "连不上";
+    return "失败";
+  }
+
+  // ---------------- 手动换源 ----------------
+
+  void _setAuto() {
+    if (_isReady) return;
+    if (!_downloading && !_failed) return;
+    _pinnedSrc = null;
+    _runId++;
+    setState(() {
+      _failed = false;
+      _status = "恢复自动找源...";
+    });
+    if (!_downloading) _start();
+  }
+
+  void _switchSource(int i) {
+    if (_isReady) return;
+    if (!_downloading && !_failed) return;
+    _pinnedSrc = i;
+    _runId++;
+    setState(() {
+      _failed = false;
+      _status = "切换到 ${_envNames[i]} 下载...";
+    });
+    if (!_downloading) _start();
+  }
 
   // ---------------- UI ----------------
 
@@ -353,101 +458,155 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   Widget build(BuildContext context) {
     return Container(
       color: const Color(0xFF03060A),
-      child: _isReady ? _buildReady() : _buildSplash(),
+      child: _isReady ? _buildReady() : _buildSplash(context),
     );
   }
 
   Widget _buildReady() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(Icons.check_circle_outline,
-              size: 96, color: Color(0xFF00FFCC)),
-          const SizedBox(height: 24),
-          const Text("引擎已就绪",
-              style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          const Text("http://127.0.0.1:3080",
-              style: TextStyle(color: Colors.white38, fontSize: 13)),
-          const SizedBox(height: 28),
-          TextButton.icon(
-            onPressed: () => _platform.invokeMethod('openEngine'),
-            icon: const Icon(Icons.open_in_browser,
-                color: Color(0xFF00FFCC), size: 18),
-            label: const Text("在浏览器打开",
-                style: TextStyle(color: Color(0xFF00FFCC))),
+    return SafeArea(
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.check_circle_outline,
+                  size: 96, color: Color(0xFF00FFCC)),
+              const SizedBox(height: 24),
+              const Text("引擎已就绪",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              const Text("http://127.0.0.1:3080",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white38, fontSize: 13)),
+              const SizedBox(height: 28),
+              TextButton.icon(
+                onPressed: () => _platform.invokeMethod('openEngine'),
+                icon: const Icon(Icons.open_in_browser,
+                    color: Color(0xFF00FFCC), size: 18),
+                label: const Text("在浏览器打开",
+                    style: TextStyle(color: Color(0xFF00FFCC))),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
 
-  Widget _buildSplash() {
+  Widget _buildSplash(BuildContext context) {
+    // 按屏幕宽度自适应，保证不同尺寸手机上 logo 和文字都居中不越界
+    final logo = math.min(160.0, MediaQuery.sizeOf(context).width * 0.4);
     return Stack(
       children: [
         Positioned.fill(
           child: CustomPaint(painter: StarryCloudPainter(_clouds, _stars)),
         ),
-        Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              SizedBox(
-                width: logoSize,
-                height: logoSize,
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    Image.asset('assets/logo.png',
-                        width: logoSize,
-                        height: logoSize,
-                        fit: BoxFit.contain,
-                        color: Colors.white,
-                        colorBlendMode: BlendMode.srcIn),
-                    SizedBox(
-                      width: logoSize,
-                      height: logoSize,
-                      child: CircularProgressIndicator(
-                        value: _progress > 0 ? _progress : null,
-                        strokeWidth: 3.0,
-                        backgroundColor: Colors.white12,
-                        color: const Color(0xFF00FFCC),
-                        strokeAlign: CircularProgressIndicator.strokeAlignCenter,
+        SafeArea(
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  SizedBox(
+                    width: logo,
+                    height: logo,
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        Image.asset('assets/logo.png',
+                            width: logo,
+                            height: logo,
+                            fit: BoxFit.contain,
+                            color: Colors.white,
+                            colorBlendMode: BlendMode.srcIn),
+                        SizedBox(
+                          width: logo,
+                          height: logo,
+                          child: CircularProgressIndicator(
+                            value: _progress > 0 ? _progress : null,
+                            strokeWidth: 3.0,
+                            backgroundColor: Colors.white12,
+                            color: const Color(0xFF00FFCC),
+                            strokeAlign:
+                                CircularProgressIndicator.strokeAlignCenter,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 32),
+                  ExcludeSemantics(
+                    child: Text(
+                      _status,
+                      textAlign: TextAlign.center,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 14.0,
+                        color: Color(0xFF00FFCC),
+                        fontWeight: FontWeight.bold,
+                        decoration: TextDecoration.none,
+                        decorationColor: Colors.transparent,
                       ),
                     ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 40),
-              ExcludeSemantics(
-                child: Text(
-                  _status,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontSize: 14.0,
-                    color: Color(0xFF00FFCC),
-                    fontWeight: FontWeight.bold,
-                    decoration: TextDecoration.none,
-                    decorationColor: Colors.transparent,
                   ),
-                ),
+                  if (_failed) ...[
+                    const SizedBox(height: 16),
+                    TextButton(
+                      onPressed: _start,
+                      child: const Text("重试",
+                          style: TextStyle(color: Color(0xFF00FFCC))),
+                    ),
+                  ],
+                  const SizedBox(height: 24),
+                  // 下载源手动切换：点一下换一个源，「自动」恢复按顺序找
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      _srcChip(-1),
+                      for (int i = 0; i < _envNames.length; i++) _srcChip(i),
+                    ],
+                  ),
+                ],
               ),
-              if (_failed) ...[
-                const SizedBox(height: 20),
-                TextButton(
-                  onPressed: _start,
-                  child: const Text("重试",
-                      style: TextStyle(color: Color(0xFF00FFCC))),
-                ),
-              ],
-            ],
+            ),
           ),
         ),
       ],
+    );
+  }
+
+  Widget _srcChip(int i) {
+    final isAuto = i == -1;
+    final bool selected = isAuto ? _pinnedSrc == null : _pinnedSrc == i;
+    final String label;
+    if (isAuto) {
+      label = "自动";
+    } else {
+      final info = _srcInfo[i];
+      label = _envNames[i] + (info == null || info.isEmpty ? "" : " $info");
+    }
+    return ActionChip(
+      onPressed: isAuto ? _setAuto : () => _switchSource(i),
+      label: Text(label,
+          style: TextStyle(
+              fontSize: 12,
+              color: selected ? Colors.black : const Color(0xFF00FFCC))),
+      backgroundColor: selected ? const Color(0xFF00FFCC) : Colors.white10,
+      side: BorderSide(
+          color: selected ? const Color(0xFF00FFCC) : Colors.white24),
+      visualDensity: VisualDensity.compact,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
     );
   }
 }
