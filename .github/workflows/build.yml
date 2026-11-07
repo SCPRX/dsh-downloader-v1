@@ -20,6 +20,11 @@ jobs:
         mkdir -p build_app/assets
         cp logo.png build_app/assets/logo.png
         cd build_app
+        # Android 10+ 对 targetSdk>=29 的应用禁止执行私有目录里的文件，
+        # 而 node 是解压到 filesDir 再直接执行的（Termux 也是降到 28 才能跑）。
+        # 如果哪天不想降了，删掉下面两行即可。
+        sed -i -E 's/targetSdk *= *flutter\.targetSdkVersion/targetSdk = 28/' android/app/build.gradle.kts || true
+        sed -i -E 's/targetSdkVersion +flutter\.targetSdkVersion/targetSdkVersion 28/' android/app/build.gradle || true
         flutter pub get
         flutter build apk --release --target-platform android-arm64
     - uses: actions/upload-artifact@v4
