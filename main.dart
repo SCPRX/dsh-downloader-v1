@@ -47,19 +47,21 @@ class _SourceCancelled implements Exception {
 class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateMixin {
   static const MethodChannel _platform = MethodChannel('com.dsh.dshapp/status');
 
-  /// 下载源按顺序尝试（实测：gh-proxy ~10MB/s；ghfast ~670KB/s；GitHub ~30KB/s 且要梯子）。
-  /// 某个源挂了/太慢会自动跳过；以后自己传了 OSS/R2 直接排在第一位。
+  /// 下载源按顺序尝试。某个源挂了/太慢会自动跳过；
+  /// 以后自己传了 OSS/R2 直接把地址放第一位。
   static const List<String> _envUrls = [
     'https://gh-proxy.com/https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/env.zip',
     'https://ghfast.top/https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/env.zip',
+    'https://ghproxy.net/https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/env.zip',
     'https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/env.zip',
   ];
 
-  /// 按钮上显示的名字，和上面的地址一一对应
+  /// 界面上显示的名字，和上面的地址一一对应
   static const List<String> _envNames = [
-    'gh-proxy',
-    'ghfast',
-    'GitHub',
+    '极速镜像',
+    '高速镜像',
+    '备用镜像',
+    '官方源',
   ];
 
   String _status = "正在检查环境...";
@@ -510,35 +512,44 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
 
   Widget _buildReady() {
     return SafeArea(
-      child: Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.check_circle_outline,
-                  size: 96, color: Color(0xFF00FFCC)),
-              const SizedBox(height: 24),
-              const Text("引擎已就绪",
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              const Text("http://127.0.0.1:3080",
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.white38, fontSize: 13)),
-              const SizedBox(height: 28),
-              TextButton.icon(
-                onPressed: () => _platform.invokeMethod('openEngine'),
-                icon: const Icon(Icons.open_in_browser,
-                    color: Color(0xFF00FFCC), size: 18),
-                label: const Text("在浏览器打开",
-                    style: TextStyle(color: Color(0xFF00FFCC))),
+      child: LayoutBuilder(
+        builder: (ctx, c) => SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: c.maxHeight),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.check_circle_outline,
+                      size: 96, color: Color(0xFF00FFCC)),
+                  const SizedBox(height: 24),
+                  _NoSemText("引擎已就绪",
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  _NoSemText("http://127.0.0.1:3080",
+                      style: const TextStyle(
+                          color: Colors.white38, fontSize: 13)),
+                  const SizedBox(height: 28),
+                  OutlinedButton(
+                    onPressed: () => _platform.invokeMethod('openEngine'),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: Color(0x4400FFCC)),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20)),
+                      minimumSize: const Size(160, 42),
+                    ),
+                    child: const Text("在浏览器打开",
+                        style: TextStyle(
+                            color: Color(0xFF00FFCC), fontSize: 14)),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       ),
@@ -546,98 +557,90 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   }
 
   Widget _buildSplash(BuildContext context) {
-    // 按屏幕宽度自适应，保证不同尺寸手机上 logo 和文字都居中不越界
-    final logo = math.min(160.0, MediaQuery.sizeOf(context).width * 0.4);
+    // logo 按屏幕宽度自适应；整体居中，小屏自动变成可滚动，不会溢出
+    final logo = math.min(150.0, MediaQuery.sizeOf(context).width * 0.36);
     return Stack(
       children: [
         Positioned.fill(
           child: CustomPaint(painter: StarryCloudPainter(_clouds, _stars)),
         ),
         SafeArea(
-          child: Center(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  SizedBox(
-                    width: logo,
-                    height: logo,
-                    child: Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        Image.asset('assets/logo.png',
-                            width: logo,
-                            height: logo,
-                            fit: BoxFit.contain,
-                            color: Colors.white,
-                            colorBlendMode: BlendMode.srcIn),
-                        SizedBox(
-                          width: logo,
-                          height: logo,
-                          child: CircularProgressIndicator(
-                            value: _progress > 0 ? _progress : null,
-                            strokeWidth: 3.0,
-                            backgroundColor: Colors.white12,
-                            color: const Color(0xFF00FFCC),
-                            strokeAlign:
-                                CircularProgressIndicator.strokeAlignCenter,
-                          ),
+          child: LayoutBuilder(
+            builder: (ctx, c) => SingleChildScrollView(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minHeight: c.maxHeight),
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      SizedBox(
+                        width: logo,
+                        height: logo,
+                        child: Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            Image.asset('assets/logo.png',
+                                width: logo,
+                                height: logo,
+                                fit: BoxFit.contain,
+                                color: Colors.white,
+                                colorBlendMode: BlendMode.srcIn),
+                            SizedBox(
+                              width: logo,
+                              height: logo,
+                              child: CircularProgressIndicator(
+                                value: _progress > 0 ? _progress : null,
+                                strokeWidth: 3.0,
+                                backgroundColor: Colors.white12,
+                                color: const Color(0xFF00FFCC),
+                                strokeAlign: CircularProgressIndicator
+                                    .strokeAlignCenter,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 28),
+                      _NoSemText(_status,
+                          style: const TextStyle(
+                            fontSize: 14.0,
+                            color: Color(0xFF00FFCC),
+                            fontWeight: FontWeight.bold,
+                          )),
+                      if (_failed) ...[
+                        const SizedBox(height: 14),
+                        TextButton(
+                          onPressed: _start,
+                          child: const Text("重试",
+                              style: TextStyle(color: Color(0xFF00FFCC))),
                         ),
                       ],
-                    ),
-                  ),
-                  const SizedBox(height: 32),
-                  ExcludeSemantics(
-                    child: Text(
-                      _status,
-                      textAlign: TextAlign.center,
-                      maxLines: 3,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 14.0,
-                        color: Color(0xFF00FFCC),
-                        fontWeight: FontWeight.bold,
-                        decoration: TextDecoration.none,
-                        decorationColor: Colors.transparent,
+                      const SizedBox(height: 10),
+                      _NoSemText(
+                          _curName.isEmpty
+                              ? ""
+                              : "$_curName · ${_speed.isEmpty ? "连接中..." : _speed}",
+                          style: const TextStyle(
+                              color: Colors.white60, fontSize: 13)),
+                      const SizedBox(height: 18),
+                      OutlinedButton(
+                        onPressed: _showSourceSheet,
+                        style: OutlinedButton.styleFrom(
+                          side: const BorderSide(color: Color(0x4400FFCC)),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(20)),
+                          minimumSize: const Size(120, 40),
+                        ),
+                        child: const Text("换源",
+                            style: TextStyle(
+                                color: Color(0xFF00FFCC), fontSize: 14)),
                       ),
-                    ),
+                    ],
                   ),
-                  if (_failed) ...[
-                    const SizedBox(height: 16),
-                    TextButton(
-                      onPressed: _start,
-                      child: const Text("重试",
-                          style: TextStyle(color: Color(0xFF00FFCC))),
-                    ),
-                  ],
-                  const SizedBox(height: 12),
-                  ExcludeSemantics(
-                    child: Text(
-                      _curName.isEmpty
-                          ? ""
-                          : "$_curName · ${_speed.isEmpty ? "连接中..." : _speed}",
-                      textAlign: TextAlign.center,
-                      style:
-                          const TextStyle(color: Colors.white60, fontSize: 13),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  OutlinedButton.icon(
-                    onPressed: _showSourceSheet,
-                    icon: const Icon(Icons.swap_horiz,
-                        size: 16, color: Color(0xFF00FFCC)),
-                    label: const Text("换源",
-                        style:
-                            TextStyle(color: Color(0xFF00FFCC), fontSize: 14)),
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: Color(0x4400FFCC)),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(20)),
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
           ),
@@ -682,9 +685,14 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                         ],
                       ),
                     ),
+                    const SizedBox(height: 4),
                     ListTile(
-                      leading: const Icon(Icons.autorenew,
-                          color: Color(0xFF00FFCC)),
+                      contentPadding:
+                          const EdgeInsets.symmetric(horizontal: 20),
+                      leading: const SizedBox(
+                          width: 24,
+                          child: Icon(Icons.autorenew,
+                              size: 20, color: Color(0xFF00FFCC))),
                       title: const Text("自动",
                           style: TextStyle(color: Colors.white)),
                       subtitle: const Text("按顺序自动找最快的源",
@@ -700,9 +708,13 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                     ),
                     for (int i = 0; i < _envNames.length; i++)
                       ListTile(
-                        leading: Icon(Icons.link,
-                            size: 20,
-                            color: const Color(0xFF00FFCC).withOpacity(0.8)),
+                        contentPadding:
+                            const EdgeInsets.symmetric(horizontal: 20),
+                        leading: const SizedBox(
+                            width: 24,
+                            child: Icon(Icons.link,
+                                size: 20,
+                                color: Color(0xCC00FFCC))),
                         title: Text(_envNames[i],
                             style: const TextStyle(color: Colors.white)),
                         subtitle: Text(_srcSubtitle(i),
@@ -732,6 +744,55 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     final info = _srcInfo[i];
     return (info == null || info.isEmpty) ? "未测" : info;
   }
+}
+
+/// 不用 Text 组件、而是自己画出来的纯文字：
+/// 没有语义节点、没有拼写检查、没有任何下划线装饰，屏幕上不会被系统画黄线。
+class _NoSemText extends StatelessWidget {
+  final String text;
+  final TextStyle style;
+  const _NoSemText(this.text, {required this.style});
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (ctx, c) {
+        final tp = TextPainter(
+          text: TextSpan(text: text, style: style),
+          textAlign: TextAlign.center,
+          textDirection: TextDirection.ltr,
+          maxLines: 3,
+          ellipsis: '…',
+        )..layout(maxWidth: c.maxWidth);
+        return CustomPaint(
+          size: Size(c.maxWidth, tp.height),
+          painter: _TextDrawPainter(text, style),
+        );
+      },
+    );
+  }
+}
+
+class _TextDrawPainter extends CustomPainter {
+  final String text;
+  final TextStyle style;
+  _TextDrawPainter(this.text, this.style);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final tp = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textAlign: TextAlign.center,
+      textDirection: TextDirection.ltr,
+      maxLines: 3,
+      ellipsis: '…',
+    )..layout(maxWidth: size.width);
+    tp.paint(canvas, Offset.zero);
+  }
+
+  @override
+  bool shouldRepaint(covariant _TextDrawPainter old) =>
+      old.text != text || old.style != style;
 }
 
 class StarParticle {
