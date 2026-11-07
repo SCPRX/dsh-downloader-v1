@@ -505,29 +505,19 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     }
   }
 
-  // ---------------- 手动换源 ----------------
+  // ---------------- 自动测速 / 手动换源 ----------------
 
-  void _setAuto() {
+  /// 「自动测速」一个动作搞定：清掉旧结果 → 全部源重新测一遍 → 直接连最快的那一个
+  void _autoRetest() {
     if (_isReady) return;
-    if (!_downloading && !_failed) return;
+    if (!_downloading && !_failed) return; // 解压/启动引擎中，别打断
     _pinnedSrc = null;
+    _srcBps.clear();
     _runId++;
     setState(() {
       _failed = false;
-      _status = "恢复自动找源...";
-    });
-    if (!_downloading) _start();
-  }
-
-  /// 重新测速结束后：自动模式下立刻按新结果连最快的源
-  void _reauto() {
-    if (_isReady) return;
-    if (!_downloading && !_failed) return;
-    _pinnedSrc = null;
-    _runId++;
-    setState(() {
-      _failed = false;
-      _status = "测速完成，连接最快的源...";
+      _srcInfo.clear();
+      _status = "正在重新测速...";
     });
     if (!_downloading) _start();
   }
@@ -712,14 +702,11 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                     Padding(
                       padding: const EdgeInsets.fromLTRB(20, 14, 20, 4),
                       child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        mainAxisAlignment: MainAxisAlignment.start,
                         children: [
                           const Text("选择下载源",
                               style: TextStyle(
                                   color: Colors.white70, fontSize: 13)),
-                          const Text("测速后自动连最快的",
-                              style: TextStyle(
-                                  color: Colors.white30, fontSize: 12)),
                         ],
                       ),
                     ),
@@ -728,39 +715,17 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                           const EdgeInsets.symmetric(horizontal: 20),
                       leading: const SizedBox(
                           width: 24,
-                          child: Icon(Icons.autorenew,
+                          child: Icon(Icons.speed,
                               size: 20, color: Color(0xFF00FFCC))),
-                      title: const Text("自动",
+                      title: const Text("自动测速",
                           style: TextStyle(color: Colors.white)),
-                      subtitle: const Text("全部测一遍，谁快连谁",
-                          style: TextStyle(color: Colors.white38, fontSize: 12)),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (_selectedSrc == -1)
-                            const Padding(
-                              padding: EdgeInsets.only(right: 6),
-                              child: Icon(Icons.check_circle,
-                                  color: Color(0xFF00FFCC)),
-                            ),
-                          IconButton(
-                            visualDensity: VisualDensity.compact,
-                            tooltip: "重新测速",
-                            onPressed: () async {
-                              await _testSources(
-                                  onUpdate: () => setSheet(() {}));
-                              if (!mounted) return;
-                              Navigator.pop(ctx);
-                              if (_pinnedSrc == null) _reauto();
-                            },
-                            icon: const Icon(Icons.refresh,
-                                size: 20, color: Color(0xFF00FFCC)),
-                          ),
-                        ],
-                      ),
+                      trailing: _selectedSrc == -1
+                          ? const Icon(Icons.check_circle,
+                              color: Color(0xFF00FFCC))
+                          : null,
                       onTap: () {
                         Navigator.pop(ctx);
-                        _setAuto();
+                        _autoRetest();
                       },
                     ),
                     for (int i = 0; i < _envNames.length; i++)
