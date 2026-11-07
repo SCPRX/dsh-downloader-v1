@@ -38,8 +38,15 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateMixin {
   static const MethodChannel _platform = MethodChannel('com.dsh.dshapp/status');
-  static const String _envUrl =
-      'https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/env.zip';
+
+  /// 下载源按顺序尝试：主源是 GitHub，后面是 ghproxy 类镜像（国内可直连）。
+  /// 某个源挂了就把那一行换掉或删掉；以后自己传了 OSS/R2 直接排在第一位。
+  static const List<String> _envUrls = [
+    'https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/env.zip',
+    'https://ghfast.top/https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/env.zip',
+    'https://gh-proxy.com/https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/env.zip',
+    'https://mirror.ghproxy.com/https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/env.zip',
+  ];
 
   String _status = "正在检查环境...";
   double _progress = 0.0;
@@ -190,7 +197,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     }
   }
 
-  /// 断点续传式下载：断网/杀进程后再进来会接着下，不会从头开始。
+  /// 多源 + 断点续传下载：源挂了自动换下一个，断了重进会接着下。
   Future<void> _download(String zipPath) async {
     final zip = File(zipPath);
     final part = File('$zipPath.part');
@@ -216,77 +223,100 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
           : "首次启动，正在下载核心环境(约 850MB)...";
     });
 
+    Object? lastError;
+    for (int i = 0; i < _envUrls.length; i++) {
+      try {
+        await _downloadFrom(_envUrls[i], i + 1, _envUrls.length, part,
+            start: start);
+        lastError = null;
+        break;
+      } catch (e) {
+        lastError = e;
+        if (await part.exists()) start = await part.length();
+        if (i + 1 < _envUrls.length && mounted) {
+          setState(() => _status = "源 ${i + 1} 失败，换第 ${i + 2} 个源继续...");
+        }
+      }
+    }
+    if (lastError != null) throw lastError;
+
+    // 简单校验：zip 头是 PK
+    final bool partOk = await part.exists() && await part.length() >= 1024;
+    if (!partOk) {
+      throw '下载文件不存在或不完整';
+    }
+    final head = await part.openRead(0, 2).first;
+    if (head.length < 2 || head[0] != 0x50 || head[1] != 0x4B) {
+      await part.delete();
+      throw '下载到的不是 zip 文件，已删除，请重试';
+    }
+
+    if (await zip.exists()) await zip.delete();
+    await part.rename(zip.path);
+  }
+
+  /// 从一个源下载；成功返回，失败抛异常（.part 保留，供续传/换源）。
+  Future<void> _downloadFrom(
+      String url, int index, int total, File part, {required int start}) async {
     final client = http.Client();
     try {
-      final req = http.Request('GET', Uri.parse(_envUrl));
+      final req = http.Request('GET', Uri.parse(url));
       if (start > 0) req.headers['range'] = 'bytes=$start-';
-      final resp = await client.send(req).timeout(const Duration(seconds: 60));
+      final resp = await client.send(req).timeout(const Duration(seconds: 15));
 
       if (resp.statusCode == 416 && start > 0) {
-        // 已经下完了
-      } else if (resp.statusCode != 200 && resp.statusCode != 206) {
+        return; // 已经下完了
+      }
+      if (resp.statusCode != 200 && resp.statusCode != 206) {
         throw '下载失败: HTTP ${resp.statusCode}';
+      }
+
+      int totalBytes = 0;
+      IOSink sink;
+      int received = start;
+      if (resp.statusCode == 206) {
+        totalBytes = _totalFromRange(resp.headers['content-range']) ??
+            (resp.contentLength ?? 0) + start;
+        sink = part.openWrite(mode: FileMode.append);
       } else {
-        int total = 0;
-        IOSink sink;
-        if (resp.statusCode == 206) {
-          total = _totalFromRange(resp.headers['content-range']) ??
-              (resp.contentLength ?? 0) + start;
-          sink = part.openWrite(mode: FileMode.append);
-        } else {
-          start = 0;
-          total = resp.contentLength ?? 0;
-          sink = part.openWrite(mode: FileMode.write);
-        }
-
-        var received = start;
-        final done = Completer<void>();
-        final sub = resp.stream.listen(
-          (chunk) {
-            sink.add(chunk);
-            received += chunk.length;
-            final now = DateTime.now();
-            if (total > 0 &&
-                now.difference(_lastProgressPaint).inMilliseconds > 250 &&
-                mounted) {
-              _lastProgressPaint = now;
-              setState(() {
-                _progress = (received / total).clamp(0.0, 1.0).toDouble();
-                _status = "下载中 ${_mb(received)} / ${_mb(total)}";
-              });
-            }
-          },
-          onError: (Object e) {
-            if (!done.isCompleted) done.completeError(e);
-          },
-          onDone: () {
-            if (!done.isCompleted) done.complete();
-          },
-          cancelOnError: true,
-        );
-
-        await done.future;
-        await sub.cancel();
-        await sink.close();
-
-        if (total > 0 && received < total) {
-          throw '下载不完整（${_mb(received)} / ${_mb(total)}），重试会接着下';
-        }
+        received = 0;
+        totalBytes = resp.contentLength ?? 0;
+        sink = part.openWrite(mode: FileMode.write);
       }
 
-      // 简单校验：zip 头是 PK
-      final bool partOk = await part.exists() && await part.length() >= 1024;
-      if (!partOk) {
-        throw '下载文件不存在或不完整';
-      }
-      final head = await part.openRead(0, 2).first;
-      if (head.length < 2 || head[0] != 0x50 || head[1] != 0x4B) {
-        await part.delete();
-        throw '下载到的不是 zip 文件，已删除，请重试';
-      }
+      final done = Completer<void>();
+      final sub = resp.stream.listen(
+        (chunk) {
+          sink.add(chunk);
+          received += chunk.length;
+          final now = DateTime.now();
+          if (totalBytes > 0 &&
+              now.difference(_lastProgressPaint).inMilliseconds > 250 &&
+              mounted) {
+            _lastProgressPaint = now;
+            setState(() {
+              _progress = (received / totalBytes).clamp(0.0, 1.0).toDouble();
+              _status =
+                  "下载中 ${_mb(received)} / ${_mb(totalBytes)}（源 $index/$total）";
+            });
+          }
+        },
+        onError: (Object e) {
+          if (!done.isCompleted) done.completeError(e);
+        },
+        onDone: () {
+          if (!done.isCompleted) done.complete();
+        },
+        cancelOnError: true,
+      );
 
-      if (await zip.exists()) await zip.delete();
-      await part.rename(zip.path);
+      await done.future;
+      await sub.cancel();
+      await sink.close();
+
+      if (totalBytes > 0 && received < totalBytes) {
+        throw '下载不完整（${_mb(received)} / ${_mb(totalBytes)}），重试会接着下';
+      }
     } finally {
       client.close();
     }
