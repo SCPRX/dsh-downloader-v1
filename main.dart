@@ -50,18 +50,11 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   @override
   void initState() {
     super.initState();
-    // 60FPS 驱动背景动画
     _bgController = AnimationController(vsync: this, duration: const Duration(milliseconds: 16))..repeat();
     _bgController.addListener(_updateParticles);
     
-    // 生成5朵初始云
-    for (int i = 0; i < 5; i++) { 
-      _clouds.add(_spawnCloud(true)); 
-    }
-    // 生成60颗星星
-    for (int i = 0; i < 60; i++) { 
-      _stars.add(_spawnStar()); 
-    }
+    for (int i = 0; i < 5; i++) { _clouds.add(_spawnCloud()); }
+    for (int i = 0; i < 60; i++) { _stars.add(_spawnStar()); }
 
     platform.setMethodCallHandler((call) async {
       if (call.method == 'updateStatus') setState(() => _status = call.arguments);
@@ -71,28 +64,28 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     _start();
   }
 
-  // 生成云团
-  CloudParticle _spawnCloud(bool isInitial) {
-    // 初始时随机分布在屏幕内，后续从屏幕外飘入
-    double startX = isInitial ? _random.nextDouble() : (_random.nextBool() ? -1.5 : 1.5);
-    
-    // 云由多个球体组成，每个球体有不同的偏移和大小
-    int partCount = 4 + _random.nextInt(4);
+  CloudParticle _spawnCloud() {
+    // 1. 随机决定云团由几个小圆组成 (3 到 6 个)
+    int partCount = 3 + _random.nextInt(4);
     List<CloudPart> parts = [];
+    
+    // 2. 随机生成每个小圆的相对位置和大小
     for (int i = 0; i < partCount; i++) {
       parts.add(CloudPart(
-        dx: (_random.nextDouble() - 0.5) * 1.2,
-        dy: (_random.nextDouble() - 0.5) * 0.6,
-        radiusMultiplier: 0.4 + _random.nextDouble() * 0.6,
+        dx: (_random.nextDouble() - 0.5) * 1.5, // 水平相对偏移
+        dy: (_random.nextDouble() - 0.5) * 0.8, // 垂直相对偏移
+        radiusMultiplier: 0.5 + _random.nextDouble() * 0.6, // 相对大小
       ));
     }
 
+    // 3. 在屏幕外侧很远的地方生成，这样飘进来绝对丝滑
+    bool fromLeft = _random.nextBool();
     return CloudParticle(
-      x: startX, 
+      x: fromLeft ? -1.2 : 1.2, 
       y: _random.nextDouble() * 0.8 + 0.1, 
-      radius: 0.2 + _random.nextDouble() * 0.15, 
-      opacity: 0.2 + _random.nextDouble() * 0.2, 
-      vx: (_random.nextBool() ? 1 : -1) * (0.0003 + _random.nextDouble() * 0.0003), 
+      radius: 0.25 + _random.nextDouble() * 0.15, 
+      opacity: 0.1 + _random.nextDouble() * 0.1, 
+      vx: (fromLeft ? 1 : -1) * (0.0003 + _random.nextDouble() * 0.0003), 
       parts: parts,
     );
   }
@@ -119,9 +112,9 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
         var cloud = _clouds[i]; 
         cloud.x += cloud.vx;
         
-        // 完全飘出屏幕很远后，才回收并重新生成，防止边缘突变
-        if (cloud.x < -2.0 || cloud.x > 2.0) { 
-          _clouds[i] = _spawnCloud(false); 
+        // 只有完全彻底飘出屏幕很远后，才回收并重新生成，防止边缘突变
+        if (cloud.x < -1.5 || cloud.x > 1.5) { 
+          _clouds[i] = _spawnCloud(); 
         }
       }
     });
@@ -158,15 +151,12 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: const Color(0xFF02050A), // 更深的夜空底色
+      color: const Color(0xFF03060A), 
       child: !_isReady
           ? Stack(
               children: [
-                // 背景用 CustomPaint 包裹
                 Positioned.fill(
-                  child: RepaintBoundary( // 🚨 核心性能优化：限制重绘区域，防止整个UI卡顿
-                    child: CustomPaint(painter: StarryCloudPainter(_clouds, _stars)),
-                  ),
+                  child: CustomPaint(painter: StarryCloudPainter(_clouds, _stars)),
                 ),
                 Center(
                   child: Column(
@@ -235,51 +225,34 @@ class StarryCloudPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // 1. 绘制3D立体云层
+    // 1. 绘制云层
+    final cloudPaint = Paint()..maskFilter = const MaskFilter.blur(BlurStyle.normal, 50.0); 
+    
     for (var cloud in clouds) {
       final centerOffset = Offset(cloud.x * size.width, cloud.y * size.height);
       final baseRadius = cloud.radius * size.width;
       
-      // 🚨 丝滑边缘透明度算法（0.2 到 0.8 之间是完全体，两端淡入淡出）
+      // 🚨 核心丝滑算法：动态计算云在屏幕边缘的透明度
       double edgeAlpha = 1.0;
-      if (cloud.x < 0.0) {
-        edgeAlpha = (cloud.x + 1.0) / 1.0;
-      } else if (cloud.x > 0.8) {
-        edgeAlpha = (2.0 - cloud.x) / 1.2;
-      }
+      // 刚进来时 (x < 0)：慢慢变清晰
+      if (cloud.x < 0) edgeAlpha = (cloud.x + 1.0) / 1.0;
+      // 快出去时 (x > 0.8)：慢慢变透明
+      if (cloud.x > 0.8) edgeAlpha = (1.8 - cloud.x) / 1.0; 
+      
+      // 限制透明度范围，防止负数
       edgeAlpha = edgeAlpha.clamp(0.0, 1.0);
       
-      double finalOpacity = cloud.opacity * edgeAlpha;
-
-      // 绘制每个云球体
+      cloudPaint.color = Colors.grey.withOpacity(cloud.opacity * edgeAlpha);
+      
+      // 根据随机生成的部件，把它们画出来拼成云
       for (var part in cloud.parts) {
-        final partCenter = Offset(
-          centerOffset.dx + part.dx * baseRadius, 
-          centerOffset.dy + part.dy * baseRadius
-        );
-        final partRadius = baseRadius * part.radiusMultiplier;
-
-        // 🚨 立体感核心：底层画暗影
-        final shadowPaint = Paint()
-          ..shader = RadialGradient(
-            colors: [Colors.grey.withOpacity(finalOpacity * 0.3), Colors.transparent],
-            stops: const [0.5, 1.0],
-          ).createShader(Rect.fromCircle(center: partCenter, radius: partRadius));
-        canvas.drawCircle(partCenter, partRadius, shadowPaint);
-
-        // 🚨 立体感核心：顶层画高光（稍微往上偏移一点点，产生受光面）
-        final highlightPaint = Paint()
-          ..shader = RadialGradient(
-            colors: [Colors.white.withOpacity(finalOpacity), Colors.transparent],
-            stops: const [0.0, 0.8],
-          ).createShader(Rect.fromCircle(
-            center: Offset(partCenter.dx, partCenter.dy - partRadius * 0.2), 
-            radius: partRadius * 0.85
-          ));
         canvas.drawCircle(
-          Offset(partCenter.dx, partCenter.dy - partRadius * 0.2), 
-          partRadius * 0.85, 
-          highlightPaint
+          Offset(
+            centerOffset.dx + part.dx * baseRadius, 
+            centerOffset.dy + part.dy * baseRadius
+          ), 
+          baseRadius * part.radiusMultiplier, 
+          cloudPaint
         );
       }
     }
