@@ -10,6 +10,7 @@ void main() {
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
+    systemNavigationBarColor: Colors.transparent,
     statusBarIconBrightness: Brightness.light,
   ));
   runApp(const MyApp());
@@ -75,8 +76,12 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
 
   int? _pinnedSrc; // null = 自动按顺序找源；点按钮后固定用那一个
   int _runId = 0; // 手动换源时 +1，打断正在进行的下载
+  int _activeSrc = -1; // 当前正在下载的源，用于在列表里打勾
   final Map<int, String> _srcInfo = {}; // 每个源最近的状态/速度
   final Map<int, double> _srcBps = {}; // 每个源最近测到的字节/秒，用于自动排序
+
+  /// 列表里该在谁后面打勾：手动=选中的源；自动=当前实际在用的源
+  int get _selectedSrc => _pinnedSrc ?? (_activeSrc >= 0 ? _activeSrc : -1);
 
   late AnimationController _bgController;
   final math.Random _random = math.Random();
@@ -203,8 +208,6 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
       if (zipPath == null || zipPath.isEmpty) {
         throw '拿不到安装包路径';
       }
-      // 一进来就后台探测各源速度，把「换源」列表填满
-      if (_srcInfo.isEmpty) unawaited(_testSources());
       await _download(zipPath);
       setState(() {
         _progress = 1.0;
@@ -261,16 +264,26 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     });
 
     final runId = _runId;
+
+    // 自动模式：先等全部源测完速，再直接连最快的那一个（不按固定顺序）
+    if (_pinnedSrc == null) {
+      if (_srcBps.isEmpty) await _testSources();
+      if (mounted) {
+        setState(() => _status = "测速完成，连接最快的源...");
+      }
+    }
     final order = _pinnedSrc != null ? <int>[_pinnedSrc!] : _autoOrder();
 
     Object? lastError;
     _downloading = true;
+    _activeSrc = -1;
     try {
       for (final i in order) {
         if (runId != _runId) {
           lastError = _SourceCancelled('换源');
           break;
         }
+        _activeSrc = i;
         setState(() {
           _speed = "";
           _curName = _envNames[i];
@@ -309,6 +322,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
       await part.rename(zip.path);
     } finally {
       _downloading = false;
+      _activeSrc = -1;
     }
   }
 
@@ -459,15 +473,15 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     try {
       final sw = Stopwatch()..start();
       final req = http.Request('GET', Uri.parse(_envUrls[i]));
-      req.headers['range'] = 'bytes=0-262143';
-      final resp = await client.send(req).timeout(const Duration(seconds: 10));
+      req.headers['range'] = 'bytes=0-1048575';
+      final resp = await client.send(req).timeout(const Duration(seconds: 8));
       final code = resp.statusCode;
       int got = 0;
       try {
         await for (final chunk
-            in resp.stream.timeout(const Duration(seconds: 10))) {
+            in resp.stream.timeout(const Duration(seconds: 8))) {
           got += chunk.length;
-          if (got >= 262144) break;
+          if (got >= 1048576) break;
         }
       } catch (_) {
         // 超时/中断：下面按 got 的大小判断
@@ -476,7 +490,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
         _srcBps[i] = -1;
         return "失败";
       }
-      if (got < 1024) {
+      if (got < 65536) {
         _srcBps[i] = -1;
         return "连不上";
       }
@@ -501,6 +515,19 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     setState(() {
       _failed = false;
       _status = "恢复自动找源...";
+    });
+    if (!_downloading) _start();
+  }
+
+  /// 重新测速结束后：自动模式下立刻按新结果连最快的源
+  void _reauto() {
+    if (_isReady) return;
+    if (!_downloading && !_failed) return;
+    _pinnedSrc = null;
+    _runId++;
+    setState(() {
+      _failed = false;
+      _status = "测速完成，连接最快的源...";
     });
     if (!_downloading) _start();
   }
@@ -683,26 +710,19 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 16, 12, 8),
+                      padding: const EdgeInsets.fromLTRB(20, 14, 20, 4),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          const Text("选择下载源（点一下立即切换）",
-                              style:
-                                  TextStyle(color: Colors.white, fontSize: 15)),
-                          TextButton.icon(
-                            onPressed: () =>
-                                _testSources(onUpdate: () => setSheet(() {})),
-                            icon: const Icon(Icons.refresh,
-                                size: 16, color: Color(0xFF00FFCC)),
-                            label: const Text("重新测速",
-                                style: TextStyle(
-                                    color: Color(0xFF00FFCC), fontSize: 13)),
-                          ),
+                          const Text("选择下载源",
+                              style: TextStyle(
+                                  color: Colors.white70, fontSize: 13)),
+                          const Text("测速后自动连最快的",
+                              style: TextStyle(
+                                  color: Colors.white30, fontSize: 12)),
                         ],
                       ),
                     ),
-                    const SizedBox(height: 4),
                     ListTile(
                       contentPadding:
                           const EdgeInsets.symmetric(horizontal: 20),
@@ -712,12 +732,32 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                               size: 20, color: Color(0xFF00FFCC))),
                       title: const Text("自动",
                           style: TextStyle(color: Colors.white)),
-                      subtitle: const Text("按顺序自动找最快的源",
+                      subtitle: const Text("全部测一遍，谁快连谁",
                           style: TextStyle(color: Colors.white38, fontSize: 12)),
-                      trailing: _pinnedSrc == null
-                          ? const Icon(Icons.check_circle,
-                              color: Color(0xFF00FFCC))
-                          : null,
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (_selectedSrc == -1)
+                            const Padding(
+                              padding: EdgeInsets.only(right: 6),
+                              child: Icon(Icons.check_circle,
+                                  color: Color(0xFF00FFCC)),
+                            ),
+                          IconButton(
+                            visualDensity: VisualDensity.compact,
+                            tooltip: "重新测速",
+                            onPressed: () async {
+                              await _testSources(
+                                  onUpdate: () => setSheet(() {}));
+                              if (!mounted) return;
+                              Navigator.pop(ctx);
+                              if (_pinnedSrc == null) _reauto();
+                            },
+                            icon: const Icon(Icons.refresh,
+                                size: 20, color: Color(0xFF00FFCC)),
+                          ),
+                        ],
+                      ),
                       onTap: () {
                         Navigator.pop(ctx);
                         _setAuto();
@@ -737,7 +777,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                         subtitle: Text(_srcSubtitle(i),
                             style: const TextStyle(
                                 color: Colors.white38, fontSize: 12)),
-                        trailing: _pinnedSrc == i
+                        trailing: _selectedSrc == i
                             ? const Icon(Icons.check_circle,
                                 color: Color(0xFF00FFCC))
                             : null,
