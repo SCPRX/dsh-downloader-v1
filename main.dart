@@ -81,6 +81,10 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   DateTime _lastProgressPaint = DateTime.fromMillisecondsSinceEpoch(0);
   Timer? _keepAliveTimer;
 
+  static const String _libsUrl =
+      'https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/runtime-libs.zip';
+  Completer<void>? _libsDone;
+
   static const List<String> _models = ['deepseek-flash', 'deepseek-v4-pro'];
   bool _testing = false;
   String _testResult = "";
@@ -147,6 +151,11 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
           break;
         case 'envReady':
           _afterEnvReady();
+          break;
+        case 'libsReady':
+          if (_libsDone != null && !_libsDone!.isCompleted) {
+            _libsDone!.complete();
+          }
           break;
         case 'rpcLine':
           _onRpcLine(call.arguments as String);
@@ -217,8 +226,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       _appDir = (await _ch.invokeMethod<String>('filesDirPath')) ?? "";
       await _loadSettings();
 
-      final bool installed =
-          await _ch.invokeMethod<bool>('checkEnv') ?? false;
+      final bool installed = await _ch.invokeMethod<bool>('checkEnv') ?? false;
       if (installed) {
         _afterEnvReady();
         return;
@@ -240,6 +248,11 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     // 解压已经结束，前台服务可以撤了
     _stopKeepAliveLoop();
     unawaited(_keepAlive(false));
+    try {
+      await _ensureLibs();
+    } catch (_) {
+      return;
+    }
     if (_apiKey.isEmpty) {
       setState(() {
         _phase = "setup";
@@ -249,6 +262,42 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       return;
     }
     await _startEngine();
+  }
+
+  // ---------------- 运行库（node 缺的 .so） ----------------
+
+  Future<void> _ensureLibs() async {
+    final libz = File("$_appDir/dsh-env/libz.so.1");
+    if (await libz.exists()) return;
+
+    setState(() {
+      _phase = "starting";
+      _failed = false;
+      _status = "首次运行，正在下载运行库(约 17MB)...";
+    });
+    try {
+      final zip = File("${Directory.systemTemp.path}/runtime-libs.zip");
+      if (await zip.exists()) await zip.delete();
+      final resp = await http
+          .get(Uri.parse(_libsUrl))
+          .timeout(const Duration(minutes: 5));
+      if (resp.statusCode != 200) {
+        throw '下载失败 HTTP ${resp.statusCode}';
+      }
+      await zip.writeAsBytes(resp.bodyBytes);
+
+      setState(() => _status = "正在安装运行库...");
+      _libsDone = Completer<void>();
+      await _ch.invokeMethod('installLibs', {'path': zip.path});
+      await _libsDone!.future.timeout(const Duration(minutes: 3));
+      setState(() => _status = "运行库就绪");
+    } catch (e) {
+      setState(() {
+        _failed = true;
+        _status = "运行库下载失败: $e";
+      });
+      rethrow;
+    }
   }
 
   // ---------------- 设置读写 ----------------
@@ -353,8 +402,8 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
           _srcInfo[i] = "$e";
           final next = order.indexOf(i) + 1;
           if (next < order.length && mounted) {
-            setState(() => _status =
-                "${_envNames[i]} 不行，换 ${_envNames[order[next]]}...");
+            setState(() =>
+                _status = "${_envNames[i]} 不行，换 ${_envNames[order[next]]}...");
           }
         }
       }
@@ -555,9 +604,8 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                   padding: EdgeInsets.fromLTRB(20, 14, 20, 4),
                   child: Align(
                     alignment: Alignment.centerLeft,
-                    child: Text("选择下载源",
-                        style:
-                            TextStyle(color: Colors.white70, fontSize: 13)),
+                    child:
+                        Text("选择下载源", style: TextStyle(color: Colors.white70, fontSize: 13)),
                   ),
                 ),
                 ListTile(
@@ -869,9 +917,8 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
 
   void _saveSettingsAndStart() {
     final key = _keyCtrl.text.trim();
-    final model = _modelCtrl.text.trim().isEmpty
-        ? "deepseek-flash"
-        : _modelCtrl.text.trim();
+    final model =
+        _modelCtrl.text.trim().isEmpty ? "deepseek-flash" : _modelCtrl.text.trim();
     setState(() {
       _apiKey = key;
       _model = model;
@@ -912,8 +959,8 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                 child: ConstrainedBox(
                   constraints: BoxConstraints(minHeight: c.maxHeight),
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 24, vertical: 16),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -938,8 +985,8 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                                   strokeWidth: 3.0,
                                   backgroundColor: Colors.white12,
                                   color: const Color(0xFF00FFCC),
-                                  strokeAlign: CircularProgressIndicator
-                                      .strokeAlignCenter,
+                                  strokeAlign:
+                                      CircularProgressIndicator.strokeAlignCenter,
                                 ),
                               ),
                             ],
@@ -1043,8 +1090,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                     TextField(
                       controller: _keyCtrl,
                       obscureText: true,
-                      style:
-                          const TextStyle(color: Colors.white, fontSize: 14),
+                      style: const TextStyle(color: Colors.white, fontSize: 14),
                       decoration: const InputDecoration(
                         labelText: "DeepSeek API Key",
                         hintText: "sk-…",
@@ -1054,8 +1100,8 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                             TextStyle(color: Color(0x44FFFFFF), fontSize: 13),
                         filled: true,
                         fillColor: Color(0xFF0E141B),
-                        contentPadding: EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 16),
+                        contentPadding:
+                            EdgeInsets.symmetric(horizontal: 16, vertical: 16),
                         enabledBorder: fieldBorder,
                         focusedBorder: OutlineInputBorder(
                           borderRadius: radius,
@@ -1065,8 +1111,8 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                     ),
                     const SizedBox(height: 14),
                     Container(
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 4),
                       decoration: BoxDecoration(
                         color: const Color(0xFF0E141B),
                         borderRadius: radius,
@@ -1162,7 +1208,8 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                     TextButton(
                       onPressed: _switchToWeb,
                       child: const Text("先用网页版",
-                          style: TextStyle(color: Colors.white38, fontSize: 13)),
+                          style:
+                              TextStyle(color: Colors.white38, fontSize: 13)),
                     ),
                   ],
                 ),
@@ -1468,4 +1515,4 @@ class StarryCloudPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant StarryCloudPainter oldDelegate) => true;
-}
+}Handler
