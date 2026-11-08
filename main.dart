@@ -669,26 +669,31 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
                               style: TextStyle(color: Color(0xFF00FFCC))),
                         ),
                       ],
-                      const SizedBox(height: 10),
-                      _NoSemText(
-                          _curName.isEmpty
-                              ? ""
-                              : "$_curName · ${_speed.isEmpty ? "连接中..." : _speed}",
-                          style: const TextStyle(
-                              color: Colors.white60, fontSize: 13)),
-                      const SizedBox(height: 18),
-                      OutlinedButton(
-                        onPressed: _showSourceSheet,
-                        style: OutlinedButton.styleFrom(
-                          side: const BorderSide(color: Color(0x4400FFCC)),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(20)),
-                          minimumSize: const Size(120, 40),
+                      if (_downloading) ...[
+                        const SizedBox(height: 10),
+                        _NoSemText(
+                            _curName.isEmpty
+                                ? ""
+                                : "$_curName · ${_speed.isEmpty ? "连接中..." : _speed}",
+                            style: const TextStyle(
+                                color: Colors.white60, fontSize: 13)),
+                      ],
+                      // 换源只在拉取/下载失败时有意义；开始解压后就藏起来
+                      if (_downloading || _failed) ...[
+                        const SizedBox(height: 18),
+                        OutlinedButton(
+                          onPressed: _showSourceSheet,
+                          style: OutlinedButton.styleFrom(
+                            side: const BorderSide(color: Color(0x4400FFCC)),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(20)),
+                            minimumSize: const Size(120, 40),
+                          ),
+                          child: const Text("换源",
+                              style: TextStyle(
+                                  color: Color(0xFF00FFCC), fontSize: 14)),
                         ),
-                        child: const Text("换源",
-                            style: TextStyle(
-                                color: Color(0xFF00FFCC), fontSize: 14)),
-                      ),
+                      ],
                     ],
                   ),
                 ),
