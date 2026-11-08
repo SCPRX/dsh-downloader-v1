@@ -81,6 +81,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   final Map<int, double> _srcBps = {};
   DateTime _lastProgressPaint = DateTime.fromMillisecondsSinceEpoch(0);
   Timer? _keepAliveTimer;
+  Timer? _startupTimer;
 
   static const String _libsUrl =
       'https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/runtime-libs.zip';
@@ -222,6 +223,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   void dispose() {
     _bgController.dispose();
     _keepAliveTimer?.cancel();
+    _startupTimer?.cancel();
     super.dispose();
   }
 
@@ -717,28 +719,40 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     setState(() {
       _phase = "starting";
       _failed = false;
-      _status = "正在启动引擎...";
+      _status = "正在启动引擎…";
+    });
+    // 引擎在手机上首次启动要加载很多模块，可能比较久，这里显示已等待秒数
+    var secs = 0;
+    _startupTimer?.cancel();
+    _startupTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted || _phase != "starting") return;
+      secs++;
+      setState(() {
+        _status = "正在启动引擎… ${secs} 秒";
+      });
     });
     try {
       await _ch.invokeMethod('startSdk', {
         'apiKey': _apiKey,
         'model': _model,
       });
-      // stdin 会先缓冲，引擎读完自然会回 initialize
+      // stdin 会先缓冲，引擎读完自然会回 initialize；手机 CPU 慢，给足时间
       final res = await _rpc('initialize', {
         'cwd': _appDir,
         'provider': 'deepseek-official',
         'model': _model,
         'approvalRequests': false,
-      }, timeout: const Duration(seconds: 120));
+      }, timeout: const Duration(minutes: 10));
       if (res == null) throw '引擎没有响应';
       _rpcReady = true;
+      _startupTimer?.cancel();
       setState(() {
         _phase = "chat";
         _failed = false;
         _status = "";
       });
     } catch (e) {
+      _startupTimer?.cancel();
       setState(() {
         _phase = "starting";
         _failed = true;
