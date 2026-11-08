@@ -85,6 +85,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   static const String _libsUrl =
       'https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/runtime-libs.zip';
   Completer<void>? _libsDone;
+  Completer<void>? _linksDone;
 
   static const List<String> _models = ['deepseek-flash', 'deepseek-v4-pro'];
   bool _testing = false;
@@ -158,14 +159,18 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
             _libsDone!.complete();
           }
           break;
+        case 'linksReady':
+          if (_linksDone != null && !_linksDone!.isCompleted) {
+            _linksDone!.complete();
+          }
+          break;
         case 'rpcLine':
           _onRpcLine(call.arguments as String);
           break;
         case 'webReady':
           final arg = call.arguments;
-          final url = (arg is String && arg.isNotEmpty)
-              ? arg
-              : "http://127.0.0.1:3090";
+          final url =
+              (arg is String && arg.isNotEmpty) ? arg : "http://127.0.0.1:3090";
           _openWeb(url);
           break;
         case 'log':
@@ -251,6 +256,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     unawaited(_keepAlive(false));
     try {
       await _ensureLibs();
+      await _repairLinks();
     } catch (_) {
       return;
     }
@@ -299,6 +305,15 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       });
       rethrow;
     }
+  }
+
+  /// 让原生层把 node_modules 里的符号链接修好（老环境没有链接，node 找不到模块）
+  Future<void> _repairLinks() async {
+    _linksDone = Completer<void>();
+    await _ch.invokeMethod('repairLinks');
+    try {
+      await _linksDone!.future.timeout(const Duration(minutes: 5));
+    } catch (_) {}
   }
 
   // ---------------- 设置读写 ----------------
@@ -408,8 +423,8 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
           _srcInfo[i] = "$e";
           final next = order.indexOf(i) + 1;
           if (next < order.length && mounted) {
-            setState(() => _status =
-                "${_envNames[i]} 不行，换 ${_envNames[order[next]]}...");
+            setState(() =>
+                _status = "${_envNames[i]} 不行，换 ${_envNames[order[next]]}...");
           }
         }
       }
@@ -935,9 +950,8 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
 
   void _saveSettingsAndStart() {
     final key = _keyCtrl.text.trim();
-    final model = _modelCtrl.text.trim().isEmpty
-        ? "deepseek-flash"
-        : _modelCtrl.text.trim();
+    final model =
+        _modelCtrl.text.trim().isEmpty ? "deepseek-flash" : _modelCtrl.text.trim();
     setState(() {
       _apiKey = key;
       _model = model;
