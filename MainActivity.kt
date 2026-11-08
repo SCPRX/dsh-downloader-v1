@@ -97,6 +97,15 @@ class MainActivity : FlutterActivity() {
                         result.success(true)
                     }
                 }
+                "installLibs" -> {
+                    val libsPath = call.argument<String>("path")
+                    if (libsPath.isNullOrBlank()) {
+                        result.error("BAD_PATH", "path is empty", null)
+                    } else {
+                        installLibs(File(libsPath))
+                        result.success(true)
+                    }
+                }
                 "startSdk" -> {
                     val apiKey = call.argument<String>("apiKey") ?: ""
                     startSdk(apiKey)
@@ -161,7 +170,7 @@ class MainActivity : FlutterActivity() {
     private fun isPortFree(port: Int): Boolean = try {
         java.net.ServerSocket().use { server ->
             server.reuseAddress = true
-            server.bind(java.net.InetSocketAddress("127.0.0.1", port))
+            server.bind(InetSocketAddress("127.0.0.1", port))
         }
         true
     } catch (_: Throwable) {
@@ -238,6 +247,50 @@ class MainActivity : FlutterActivity() {
                 notifyEvent("envReady", null)
             } catch (t: Throwable) {
                 fail("解压失败: ${t.message}")
+            }
+        }.start()
+    }
+
+    // ---------- 安装 node 缺的系统库（libz/libssl/libicu 等） ----------
+
+    private fun installLibs(zipFile: File) {
+        Thread {
+            try {
+                if (!zipFile.exists()) {
+                    fail("找不到运行库补丁包")
+                    return@Thread
+                }
+                status("正在安装运行库...")
+                val buf = ByteArray(64 * 1024)
+                val root = envDir.canonicalPath
+                ZipInputStream(FileInputStream(zipFile)).use { z ->
+                    while (true) {
+                        val e = z.nextEntry ?: break
+                        val f = File(envDir, e.name)
+                        if (!f.canonicalPath.startsWith(root + File.separator) &&
+                            f.canonicalPath != root
+                        ) {
+                            continue
+                        }
+                        if (e.isDirectory) {
+                            f.mkdirs()
+                            continue
+                        }
+                        f.parentFile?.mkdirs()
+                        FileOutputStream(f).use { o ->
+                            var n = z.read(buf)
+                            while (n > 0) {
+                                o.write(buf, 0, n)
+                                n = z.read(buf)
+                            }
+                        }
+                    }
+                }
+                zipFile.delete()
+                status("运行库安装完成")
+                notifyEvent("libsReady", null)
+            } catch (t: Throwable) {
+                fail("运行库安装失败: ${t.message}")
             }
         }.start()
     }
