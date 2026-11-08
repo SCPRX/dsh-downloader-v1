@@ -69,7 +69,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   ];
   static const List<String> _envNames = ['高速镜像', '极速镜像', '官方源'];
   /// 环境包的标准大小，用于判断源上是不是旧文件 / 下载是否完整
-  static const int _envSize = 151976697;
+  static const int _envSize = 151976740;
   int? _pinnedSrc;
   int _runId = 0;
   int _activeSrc = -1;
