@@ -37,7 +37,14 @@ jobs:
                 return "".join('            maven { url = uri("%s") }\n' % u for u in urls)
             return "".join('            maven { url "%s" }\n' % u for u in urls)
 
-        for p in ["android/settings.gradle.kts", "android/settings.gradle"]:
+        for p in [
+            "android/settings.gradle.kts",
+            "android/settings.gradle",
+            "android/build.gradle.kts",
+            "android/build.gradle",
+            "android/app/build.gradle.kts",
+            "android/app/build.gradle",
+        ]:
             try:
                 s = open(p, encoding="utf-8").read()
             except FileNotFoundError:
