@@ -246,7 +246,12 @@ class MainActivity : FlutterActivity() {
                 zipFile.delete()
                 notifyEvent("envReady", null)
             } catch (t: Throwable) {
-                fail("解压失败: ${t.message}")
+                // 包坏了（常见于多源续传混了字节）：删掉，让用户重试时重新下载
+                try {
+                    zipFile.delete()
+                } catch (_: Throwable) {
+                }
+                fail("解压失败: ${t.message}（坏包已删除，请重试）")
             }
         }.start()
     }
