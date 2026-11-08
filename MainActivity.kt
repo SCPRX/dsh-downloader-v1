@@ -301,6 +301,8 @@ class MainActivity : FlutterActivity() {
  * 切到后台或锁屏时不会被当缓存进程杀掉，Dart 那边的下载就能继续跑。
  */
 class DownloadService : android.app.Service() {
+    private var wakeLock: android.os.PowerManager.WakeLock? = null
+
     override fun onBind(intent: Intent?): android.os.IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -332,6 +334,24 @@ class DownloadService : android.app.Service() {
                 .build()
             startForeground(1001, n)
         }
-        return android.app.Service.START_STICKY
+        // 屏幕熄灭时保持 CPU 不睡，下载才不会被掐（30 分钟后自动释放）
+        try {
+            val pm = getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
+            wakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "dsh:download")
+            wakeLock?.acquire(30 * 60 * 1000L)
+        } catch (t: Throwable) {
+            // 忽略
+        }
+        return android.app.Service.START_NOT_STICKY
+    }
+
+    override fun onDestroy() {
+        try {
+            wakeLock?.release()
+        } catch (t: Throwable) {
+            // 忽略
+        }
+        wakeLock = null
+        super.onDestroy()
     }
 }
