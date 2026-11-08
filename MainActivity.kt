@@ -74,8 +74,36 @@ class MainActivity : FlutterActivity() {
                     openEngine()
                     result.success(true)
                 }
+                "keepAlive" -> {
+                    val on = call.argument<Boolean>("on") ?: false
+                    if (on) startKeepAlive() else stopKeepAlive()
+                    result.success(true)
+                }
                 else -> result.notImplemented()
             }
+        }
+    }
+
+    // ---------- 下载时挂前台服务，避免切到后台/锁屏被系统杀掉 ----------
+
+    private fun startKeepAlive() {
+        try {
+            val intent = Intent(this, DownloadService::class.java)
+            if (android.os.Build.VERSION.SDK_INT >= 26) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+        } catch (t: Throwable) {
+            // 忽略，下载本身照常进行
+        }
+    }
+
+    private fun stopKeepAlive() {
+        try {
+            stopService(Intent(this, DownloadService::class.java))
+        } catch (t: Throwable) {
+            // 忽略
         }
     }
 
@@ -265,5 +293,45 @@ class MainActivity : FlutterActivity() {
         } catch (t: Throwable) {
             fail("打不开浏览器: ${t.message}")
         }
+    }
+}
+
+/**
+ * 下载期间的前台服务：只负责挂一个通知，让系统把进程当成「正在干活」，
+ * 切到后台或锁屏时不会被当缓存进程杀掉，Dart 那边的下载就能继续跑。
+ */
+class DownloadService : android.app.Service() {
+    override fun onBind(intent: Intent?): android.os.IBinder? = null
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val title = "原生 DSH"
+        val text = "正在下载核心环境…"
+        val icon = android.R.drawable.stat_sys_download
+        if (android.os.Build.VERSION.SDK_INT >= 26) {
+            val nm = getSystemService(android.app.NotificationManager::class.java)
+            nm?.createNotificationChannel(
+                android.app.NotificationChannel(
+                    "dsh_download",
+                    "下载",
+                    android.app.NotificationManager.IMPORTANCE_LOW
+                )
+            )
+            val n = android.app.Notification.Builder(this, "dsh_download")
+                .setSmallIcon(icon)
+                .setContentTitle(title)
+                .setContentText(text)
+                .setOngoing(true)
+                .build()
+            startForeground(1001, n)
+        } else {
+            val n = android.app.Notification.Builder(this)
+                .setSmallIcon(icon)
+                .setContentTitle(title)
+                .setContentText(text)
+                .setOngoing(true)
+                .build()
+            startForeground(1001, n)
+        }
+        return android.app.Service.START_STICKY
     }
 }
