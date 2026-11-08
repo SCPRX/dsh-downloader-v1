@@ -1515,4 +1515,4 @@ class StarryCloudPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant StarryCloudPainter oldDelegate) => true;
-}Handler
+}
