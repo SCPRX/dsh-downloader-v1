@@ -297,8 +297,8 @@ class MainActivity : FlutterActivity() {
 }
 
 /**
- * 下载期间的前台服务：只负责挂一个通知，让系统把进程当成「正在干活」，
- * 切到后台或锁屏时不会被当缓存进程杀掉，Dart 那边的下载就能继续跑。
+ * 下载/解压期间的前台服务：挂一个通知，让系统把进程当成「正在干活」，
+ * 切到后台或锁屏时不会被当缓存进程杀掉，下载和解压就能继续跑。
  */
 class DownloadService : android.app.Service() {
     private var wakeLock: android.os.PowerManager.WakeLock? = null
@@ -307,7 +307,7 @@ class DownloadService : android.app.Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val title = "原生 DSH"
-        val text = "正在下载核心环境…"
+        val text = "正在准备环境，请勿清理后台…"
         val icon = android.R.drawable.stat_sys_download
         if (android.os.Build.VERSION.SDK_INT >= 26) {
             val nm = getSystemService(android.app.NotificationManager::class.java)
@@ -334,11 +334,11 @@ class DownloadService : android.app.Service() {
                 .build()
             startForeground(1001, n)
         }
-        // 屏幕熄灭时保持 CPU 不睡，下载才不会被掐（30 分钟后自动释放）
+        // 屏幕熄灭时保持 CPU 不睡，下载/解压才不会被掐（服务销毁时释放）
         try {
             val pm = getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
             wakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "dsh:download")
-            wakeLock?.acquire(30 * 60 * 1000L)
+            wakeLock?.acquire()
         } catch (t: Throwable) {
             // 忽略
         }
