@@ -81,6 +81,10 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   DateTime _lastProgressPaint = DateTime.fromMillisecondsSinceEpoch(0);
   Timer? _keepAliveTimer;
 
+  static const List<String> _models = ['deepseek-flash', 'deepseek-v4-pro'];
+  bool _testing = false;
+  String _testResult = "";
+
   // ---------- 设置 ----------
   String _apiKey = "";
   String _model = "deepseek-flash";
@@ -105,7 +109,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
 
   // ---------- 网页兜底 ----------
   WebViewController? _web;
-  String _engineUrl = "http://127.0.0.1:3080";
+  String _engineUrl = "http://127.0.0.1:3090";
 
   // ---------- 背景 ----------
   late AnimationController _bgController;
@@ -151,7 +155,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
           final arg = call.arguments;
           final url = (arg is String && arg.isNotEmpty)
               ? arg
-              : "http://127.0.0.1:3080";
+              : "http://127.0.0.1:3090";
           _openWeb(url);
           break;
         case 'log':
@@ -998,64 +1002,208 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   }
 
   Widget _buildSetup() {
+    final currentModel = _models.contains(_modelCtrl.text.trim())
+        ? _modelCtrl.text.trim()
+        : _models.first;
+    const radius = BorderRadius.all(Radius.circular(14));
+    const fieldBorder = OutlineInputBorder(
+      borderRadius: radius,
+      borderSide: BorderSide(color: Color(0x22FFFFFF)),
+    );
     return Container(
       color: const Color(0xFF03060A),
-      child: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const Text("第一次使用，填一下模型信息",
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
-                const Text("API Key 只保存在本机 App 里，不会上传。",
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.white38, fontSize: 12)),
-                const SizedBox(height: 24),
-                TextField(
-                  controller: _keyCtrl,
-                  obscureText: true,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: const InputDecoration(
-                    labelText: "DeepSeek API Key",
-                    hintText: "sk-...",
-                    border: OutlineInputBorder(),
-                  ),
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: CustomPaint(painter: StarryCloudPainter(_clouds, _stars)),
+          ),
+          SafeArea(
+            child: Center(
+              child: SingleChildScrollView(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Icon(Icons.vpn_key_outlined,
+                        size: 44, color: Color(0xFF00FFCC)),
+                    const SizedBox(height: 20),
+                    _CenterText("第一次使用，需要填一下模型信息",
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 17,
+                            height: 1.5,
+                            fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 6),
+                    _CenterText("API Key 只保存在本机，不会上传",
+                        style: const TextStyle(
+                            color: Colors.white38, fontSize: 12, height: 1.5)),
+                    const SizedBox(height: 30),
+                    TextField(
+                      controller: _keyCtrl,
+                      obscureText: true,
+                      style:
+                          const TextStyle(color: Colors.white, fontSize: 14),
+                      decoration: const InputDecoration(
+                        labelText: "DeepSeek API Key",
+                        hintText: "sk-…",
+                        labelStyle:
+                            TextStyle(color: Color(0x99FFFFFF), fontSize: 13),
+                        hintStyle:
+                            TextStyle(color: Color(0x44FFFFFF), fontSize: 13),
+                        filled: true,
+                        fillColor: Color(0xFF0E141B),
+                        contentPadding: EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 16),
+                        enabledBorder: fieldBorder,
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: radius,
+                          borderSide: BorderSide(color: Color(0x9900FFCC)),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Container(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0E141B),
+                        borderRadius: radius,
+                        border: Border.all(color: const Color(0x22FFFFFF)),
+                      ),
+                      child: Row(
+                        children: [
+                          const Text("模型",
+                              style: TextStyle(
+                                  color: Color(0x99FFFFFF), fontSize: 13)),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: DropdownButtonHideUnderline(
+                              child: DropdownButton<String>(
+                                value: currentModel,
+                                isExpanded: true,
+                                dropdownColor: const Color(0xFF0E141B),
+                                style: const TextStyle(
+                                    color: Colors.white, fontSize: 14),
+                                items: [
+                                  for (final m in _models)
+                                    DropdownMenuItem(
+                                      value: m,
+                                      child: Text(m,
+                                          style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 14)),
+                                    ),
+                                ],
+                                onChanged: (v) {
+                                  if (v == null) return;
+                                  setState(() {
+                                    _modelCtrl.text = v;
+                                    _testResult = "";
+                                  });
+                                },
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        TextButton.icon(
+                          onPressed: _testing ? null : _testKey,
+                          icon: _testing
+                              ? const SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Color(0xFF00FFCC)))
+                              : const Icon(Icons.wifi_tethering,
+                                  size: 16, color: Color(0xFF00FFCC)),
+                          label: const Text("测试连接",
+                              style: TextStyle(
+                                  color: Color(0xFF00FFCC), fontSize: 13)),
+                        ),
+                        Expanded(
+                          child: Text(
+                            _testResult,
+                            textAlign: TextAlign.right,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: _testResult.startsWith("✓")
+                                  ? const Color(0xFF00FFCC)
+                                  : Colors.white54,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      height: 48,
+                      child: FilledButton(
+                        onPressed: _saveSettingsAndStart,
+                        style: FilledButton.styleFrom(
+                          backgroundColor: const Color(0xFF00FFCC),
+                          foregroundColor: const Color(0xFF03211D),
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(24)),
+                        ),
+                        child: const Text("保存并启动",
+                            style: TextStyle(
+                                fontSize: 15, fontWeight: FontWeight.w600)),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextButton(
+                      onPressed: _switchToWeb,
+                      child: const Text("先用网页版",
+                          style: TextStyle(color: Colors.white38, fontSize: 13)),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: _modelCtrl,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: const InputDecoration(
-                    labelText: "模型",
-                    hintText: "deepseek-flash （或 deepseek-v4-pro）",
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 24),
-                FilledButton(
-                  onPressed: _saveSettingsAndStart,
-                  child: const Text("保存并启动"),
-                ),
-                const SizedBox(height: 12),
-                TextButton(
-                  onPressed: _switchToWeb,
-                  child: const Text("先用网页版",
-                      style: TextStyle(color: Colors.white54)),
-                ),
-              ],
+              ),
             ),
           ),
-        ),
+        ],
       ),
     );
+  }
+
+  /// 直接打 DeepSeek 的模型列表接口，验证 Key 是否有效
+  Future<void> _testKey() async {
+    final key = _keyCtrl.text.trim();
+    if (key.isEmpty) {
+      setState(() => _testResult = "先填 API Key");
+      return;
+    }
+    setState(() {
+      _testing = true;
+      _testResult = "";
+    });
+    try {
+      final resp = await http.get(
+        Uri.parse("https://api.deepseek.com/models"),
+        headers: {"Authorization": "Bearer $key"},
+      ).timeout(const Duration(seconds: 20));
+      if (!mounted) return;
+      if (resp.statusCode == 200) {
+        setState(() => _testResult = "✓ 连接成功");
+      } else if (resp.statusCode == 401 || resp.statusCode == 403) {
+        setState(() => _testResult = "✗ Key 无效（${resp.statusCode}）");
+      } else {
+        setState(() => _testResult = "✗ HTTP ${resp.statusCode}");
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _testResult = "✗ 网络不通：$e");
+    } finally {
+      if (mounted) setState(() => _testing = false);
+    }
   }
 
   Widget _buildChat() {
