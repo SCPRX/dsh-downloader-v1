@@ -28,8 +28,14 @@ class MainActivity : FlutterActivity() {
 
     private lateinit var channel: MethodChannel
 
-    @Volatile private var server: Process? = null
+    /** 网页模式（dsh web）的进程 */
+    @Volatile private var webServer: Process? = null
+
+    /** 原生模式（dsh --profile sdk）的进程 */
+    @Volatile private var sdkProc: Process? = null
+
     @Volatile private var starting = false
+    @Volatile private var engineUrl: String = ""
 
     private val envDir: File get() = File(filesDir, "dsh-env")
     private val nodeBin: File get() = File(envDir, "node")
@@ -57,21 +63,33 @@ class MainActivity : FlutterActivity() {
             when (call.method) {
                 "checkEnv" -> result.success(isEnvReady())
                 "envZipPath" -> result.success(File(cacheDir, "env_data.zip").absolutePath)
-                "startServer" -> {
-                    startServer()
-                    result.success(true)
-                }
+                "filesDirPath" -> result.success(filesDir.absolutePath)
                 "startExtract" -> {
                     val path = call.argument<String>("path")
                     if (path.isNullOrBlank()) {
                         result.error("BAD_PATH", "path is empty", null)
                     } else {
-                        extractAndStart(File(path))
+                        extractEnv(File(path))
                         result.success(true)
                     }
                 }
+                "startSdk" -> {
+                    val apiKey = call.argument<String>("apiKey") ?: ""
+                    startSdk(apiKey)
+                    result.success(true)
+                }
+                "rpcSend" -> {
+                    val line = call.argument<String>("line") ?: ""
+                    rpcSend(line)
+                    result.success(true)
+                }
+                "startWeb" -> {
+                    startWeb()
+                    result.success(true)
+                }
                 "openEngine" -> {
-                    openEngine()
+                    val url = call.argument<String>("url") ?: "http://127.0.0.1:$PORT"
+                    openEngine(url)
                     result.success(true)
                 }
                 "keepAlive" -> {
@@ -84,40 +102,11 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    // ---------- 下载时挂前台服务，避免切到后台/锁屏被系统杀掉 ----------
-
-    private fun startKeepAlive() {
-        try {
-            val intent = Intent(this, DownloadService::class.java)
-            if (android.os.Build.VERSION.SDK_INT >= 26) {
-                startForegroundService(intent)
-            } else {
-                startService(intent)
-            }
-        } catch (t: Throwable) {
-            // 忽略，下载本身照常进行
-        }
-    }
-
-    private fun stopKeepAlive() {
-        try {
-            stopService(Intent(this, DownloadService::class.java))
-        } catch (t: Throwable) {
-            // 忽略
-        }
-    }
-
-    // ---------- 给 Dart 的状态回传 ----------
+    // ---------- 状态回传 ----------
 
     private fun status(msg: String) {
         runOnUiThread {
             if (this::channel.isInitialized) channel.invokeMethod("updateStatus", msg)
-        }
-    }
-
-    private fun ready() {
-        runOnUiThread {
-            if (this::channel.isInitialized) channel.invokeMethod("ready", null)
         }
     }
 
@@ -128,13 +117,19 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun notifyEvent(method: String, arg: Any?) {
+        runOnUiThread {
+            if (this::channel.isInitialized) channel.invokeMethod(method, arg)
+        }
+    }
+
     // ---------- 环境检查 ----------
 
     private fun isEnvReady(): Boolean = nodeBin.exists() && cliEntry.exists()
 
     // ---------- 解压 ----------
 
-    private fun extractAndStart(zipFile: File) {
+    private fun extractEnv(zipFile: File) {
         Thread {
             try {
                 if (!zipFile.exists()) {
@@ -188,18 +183,105 @@ class MainActivity : FlutterActivity() {
                 }
                 status("解压完成，共 $count 个文件")
                 zipFile.delete()
-                startServer()
+                notifyEvent("envReady", null)
             } catch (t: Throwable) {
                 fail("解压失败: ${t.message}")
             }
         }.start()
     }
 
-    // ---------- 启动引擎 ----------
+    // ---------- 原生模式：dsh --profile sdk（stdio JSON-RPC） ----------
 
-    private fun startServer() {
-        if (server?.isAlive == true) {
-            Thread { awaitReady(server) }.start()
+    private fun startSdk(apiKey: String) {
+        if (!isEnvReady()) {
+            fail("环境还没装好")
+            return
+        }
+        killWeb()
+        killSdk()
+
+        Thread {
+            try {
+                status("正在启动引擎...")
+                val cmd = "cd '${workDir.absolutePath}' && " +
+                    "export LD_LIBRARY_PATH='${envDir.absolutePath}' && " +
+                    "export DEEPSEEK_API_KEY='$apiKey' && " +
+                    "exec '${nodeBin.absolutePath}' --expose-internals apps/cli/src/bin.ts --profile sdk"
+                val p = ProcessBuilder("/system/bin/sh", "-c", cmd)
+                    .directory(workDir)
+                    .redirectErrorStream(false)
+                    .start()
+                sdkProc = p
+
+                // stdout：JSON-RPC 每一行
+                Thread {
+                    try {
+                        BufferedReader(InputStreamReader(p.inputStream)).use { r ->
+                            var line = r.readLine()
+                            while (line != null) {
+                                notifyEvent("rpcLine", line)
+                                line = r.readLine()
+                            }
+                        }
+                    } catch (_: Throwable) {
+                    }
+                }.start()
+
+                // stderr：引擎日志
+                Thread {
+                    try {
+                        BufferedReader(InputStreamReader(p.errorStream)).use { r ->
+                            var line = r.readLine()
+                            while (line != null) {
+                                val s = line.trim()
+                                if (s.isNotEmpty()) status("底层: $s")
+                                line = r.readLine()
+                            }
+                        }
+                    } catch (_: Throwable) {
+                    }
+                }.start()
+
+                val code = p.waitFor()
+                if (sdkProc === p) {
+                    fail("引擎进程已退出（code=$code）")
+                }
+            } catch (t: Throwable) {
+                fail("引擎启动失败: ${t.message}")
+            }
+        }.start()
+    }
+
+    private fun rpcSend(line: String) {
+        Thread {
+            try {
+                val p = sdkProc ?: return@Thread
+                val out = p.outputStream
+                out.write((line + "\n").toByteArray(Charsets.UTF_8))
+                out.flush()
+            } catch (_: Throwable) {
+            }
+        }.start()
+    }
+
+    private fun killSdk() {
+        try {
+            sdkProc?.destroy()
+        } catch (_: Throwable) {
+        }
+        sdkProc = null
+    }
+
+    // ---------- 网页兜底：dsh web + 探测端口 ----------
+
+    private fun startWeb() {
+        if (!isEnvReady()) {
+            fail("环境还没装好")
+            return
+        }
+        killSdk()
+        if (webServer?.isAlive == true) {
+            Thread { awaitReady(webServer) }.start()
             return
         }
         if (starting) return
@@ -207,26 +289,31 @@ class MainActivity : FlutterActivity() {
 
         Thread {
             try {
-                if (!isEnvReady()) {
-                    fail("环境还没装好，无法启动引擎")
-                    return@Thread
-                }
-                status("正在启动引擎...")
-                val cmd = "LD_LIBRARY_PATH='${envDir.absolutePath}' " +
+                status("正在启动网页版引擎...")
+                val cmd = "cd '${workDir.absolutePath}' && " +
+                    "export LD_LIBRARY_PATH='${envDir.absolutePath}' && " +
                     "exec '${nodeBin.absolutePath}' --expose-internals apps/cli/src/bin.ts web"
                 val p = ProcessBuilder("/system/bin/sh", "-c", cmd)
                     .directory(workDir)
                     .redirectErrorStream(true)
                     .start()
-                server = p
+                webServer = p
                 pumpLog(p)
                 awaitReady(p)
             } catch (t: Throwable) {
-                fail("引擎启动失败: ${t.message}")
+                fail("网页版启动失败: ${t.message}")
             } finally {
                 starting = false
             }
         }.start()
+    }
+
+    private fun killWeb() {
+        try {
+            webServer?.destroy()
+        } catch (_: Throwable) {
+        }
+        webServer = null
     }
 
     private fun pumpLog(p: Process) {
@@ -236,32 +323,23 @@ class MainActivity : FlutterActivity() {
                     var line = r.readLine()
                     while (line != null) {
                         val s = line.trim()
-                        val low = s.lowercase()
-                        if (s.isNotEmpty() && (
-                                low.contains("error") || low.contains("fail") ||
-                                    low.contains("listen") || low.contains("http") ||
-                                    low.contains("port") || low.contains("warn")
-                                )
-                        ) {
-                            status("底层: $s")
-                        }
+                        val m = Regex("https?://127\\.0\\.0\\.1:" + PORT + "[^\\s\"'<>]*").find(s)
+                        if (m != null) engineUrl = m.value
                         line = r.readLine()
                     }
                 }
-            } catch (ex: Throwable) {
-                // 进程结束时 readLine 会抛，忽略
+            } catch (_: Throwable) {
             }
         }.start()
     }
 
-    /** 等到 3080 端口真的能连上，才算引擎就绪；不再等 node 退出。 */
     private fun awaitReady(p: Process?) {
         status("等待引擎响应...")
         val deadline = System.currentTimeMillis() + 180_000
         while (System.currentTimeMillis() < deadline) {
             if (portOpen()) {
                 status("引擎已就绪")
-                ready()
+                notifyEvent("webReady", engineUrl)
                 return
             }
             if (p != null && !p.isAlive) {
@@ -270,7 +348,7 @@ class MainActivity : FlutterActivity() {
             }
             try {
                 Thread.sleep(400)
-            } catch (ex: InterruptedException) {
+            } catch (_: InterruptedException) {
                 return
             }
         }
@@ -280,25 +358,46 @@ class MainActivity : FlutterActivity() {
     private fun portOpen(): Boolean = try {
         Socket().use { it.connect(InetSocketAddress("127.0.0.1", PORT), 300) }
         true
-    } catch (ex: Throwable) {
+    } catch (_: Throwable) {
         false
     }
 
-    private fun openEngine() {
+    private fun openEngine(url: String) {
         try {
             startActivity(
-                Intent(Intent.ACTION_VIEW, Uri.parse("http://127.0.0.1:$PORT"))
+                Intent(Intent.ACTION_VIEW, Uri.parse(url))
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             )
         } catch (t: Throwable) {
             fail("打不开浏览器: ${t.message}")
         }
     }
+
+    // ---------- 下载/解压时的前台服务 ----------
+
+    private fun startKeepAlive() {
+        try {
+            val intent = Intent(this, DownloadService::class.java)
+            if (android.os.Build.VERSION.SDK_INT >= 26) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun stopKeepAlive() {
+        try {
+            stopService(Intent(this, DownloadService::class.java))
+        } catch (_: Throwable) {
+        }
+    }
 }
 
 /**
  * 下载/解压期间的前台服务：挂一个通知，让系统把进程当成「正在干活」，
- * 切到后台或锁屏时不会被当缓存进程杀掉，下载和解压就能继续跑。
+ * 切到后台或锁屏时不会被当缓存进程杀掉。
  */
 class DownloadService : android.app.Service() {
     private var wakeLock: android.os.PowerManager.WakeLock? = null
@@ -309,6 +408,13 @@ class DownloadService : android.app.Service() {
         val title = "原生 DSH"
         val text = "正在准备环境，请勿清理后台…"
         val icon = android.R.drawable.stat_sys_download
+        // 点通知回到 App
+        val pi = android.app.PendingIntent.getActivity(
+            this,
+            0,
+            Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
         if (android.os.Build.VERSION.SDK_INT >= 26) {
             val nm = getSystemService(android.app.NotificationManager::class.java)
             nm?.createNotificationChannel(
@@ -323,6 +429,8 @@ class DownloadService : android.app.Service() {
                 .setContentTitle(title)
                 .setContentText(text)
                 .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setContentIntent(pi)
                 .build()
             startForeground(1001, n)
         } else {
@@ -331,16 +439,17 @@ class DownloadService : android.app.Service() {
                 .setContentTitle(title)
                 .setContentText(text)
                 .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setContentIntent(pi)
                 .build()
             startForeground(1001, n)
         }
-        // 屏幕熄灭时保持 CPU 不睡，下载/解压才不会被掐（服务销毁时释放）
+        // 屏幕熄灭时保持 CPU 不睡（服务销毁时释放）
         try {
             val pm = getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
             wakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "dsh:download")
             wakeLock?.acquire()
-        } catch (t: Throwable) {
-            // 忽略
+        } catch (_: Throwable) {
         }
         return android.app.Service.START_NOT_STICKY
     }
@@ -348,8 +457,7 @@ class DownloadService : android.app.Service() {
     override fun onDestroy() {
         try {
             wakeLock?.release()
-        } catch (t: Throwable) {
-            // 忽略
+        } catch (_: Throwable) {
         }
         wakeLock = null
         super.onDestroy()
