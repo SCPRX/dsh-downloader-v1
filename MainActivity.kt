@@ -23,7 +23,10 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         private const val CHANNEL = "com.dsh.dshapp/status"
-        private const val PORT = 3080
+        /** 起始端口；被占用就往后找 */
+        private const val BASE_PORT = 3090
+        /** 最多往后找多少个端口 */
+        private const val MAX_TRIES = 20
     }
 
     private lateinit var channel: MethodChannel
@@ -36,6 +39,18 @@ class MainActivity : FlutterActivity() {
 
     @Volatile private var starting = false
     @Volatile private var engineUrl: String = ""
+    /** 实际使用的端口（自动挑的）；0 = 交给系统分配，待从日志读取 */
+    @Volatile private var activePort: Int = BASE_PORT
+    private val lastLog = ArrayDeque<String>()
+
+    /** 记住最近几行引擎输出，失败时直接显示给用户 */
+    private fun remember(line: String) {
+        if (line.isBlank()) return
+        lastLog.addLast(line)
+        while (lastLog.size > 8) lastLog.removeFirst()
+    }
+
+    private fun lastLogText(): String = lastLog.joinToString(" ｜ ")
 
     private val envDir: File get() = File(filesDir, "dsh-env")
     private val nodeBin: File get() = File(envDir, "node")
@@ -48,7 +63,7 @@ class MainActivity : FlutterActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         super.onCreate(savedInstanceState)
 
-        // 关键：允许内容铺进挖孔屏区域，否则竖屏顶部、横屏摄像头那一侧会被系统留黑边
+        // 允许内容铺进挖孔屏区域，否则竖屏顶部、横屏摄像头那一侧会被系统留黑边
         if (android.os.Build.VERSION.SDK_INT >= 28) {
             val attrs = window.attributes
             attrs.layoutInDisplayCutoutMode =
@@ -97,7 +112,7 @@ class MainActivity : FlutterActivity() {
                     result.success(true)
                 }
                 "openEngine" -> {
-                    val url = call.argument<String>("url") ?: "http://127.0.0.1:$PORT"
+                    val url = call.argument<String>("url") ?: "http://127.0.0.1:$activePort"
                     openEngine(url)
                     result.success(true)
                 }
@@ -130,6 +145,34 @@ class MainActivity : FlutterActivity() {
         runOnUiThread {
             if (this::channel.isInitialized) channel.invokeMethod(method, arg)
         }
+    }
+
+    // ---------- 端口工具 ----------
+
+    /** 从 BASE_PORT 开始往后找第一个能绑上的端口；都占着就返回 0（交给系统分配） */
+    private fun findFreePort(): Int {
+        for (i in 0 until MAX_TRIES) {
+            val port = BASE_PORT + i
+            if (isPortFree(port)) return port
+        }
+        return 0
+    }
+
+    private fun isPortFree(port: Int): Boolean = try {
+        java.net.ServerSocket().use { server ->
+            server.reuseAddress = true
+            server.bind(java.net.InetSocketAddress("127.0.0.1", port))
+        }
+        true
+    } catch (_: Throwable) {
+        false
+    }
+
+    private fun portFromUrl(url: String): Int? = try {
+        val p = Uri.parse(url).port
+        if (p > 0) p else null
+    } catch (_: Throwable) {
+        null
     }
 
     // ---------- 环境检查 ----------
@@ -228,6 +271,7 @@ class MainActivity : FlutterActivity() {
                         BufferedReader(InputStreamReader(p.inputStream)).use { r ->
                             var line = r.readLine()
                             while (line != null) {
+                                remember(line)
                                 notifyEvent("rpcLine", line)
                                 line = r.readLine()
                             }
@@ -243,6 +287,7 @@ class MainActivity : FlutterActivity() {
                             var line = r.readLine()
                             while (line != null) {
                                 val s = line.trim()
+                                remember(s)
                                 if (s.isNotEmpty()) status("底层: $s")
                                 line = r.readLine()
                             }
@@ -253,7 +298,7 @@ class MainActivity : FlutterActivity() {
 
                 val code = p.waitFor()
                 if (sdkProc === p) {
-                    fail("引擎进程已退出（code=$code）")
+                    fail("引擎退出(code=$code)：${lastLogText()}")
                 }
             } catch (t: Throwable) {
                 fail("引擎启动失败: ${t.message}")
@@ -281,7 +326,7 @@ class MainActivity : FlutterActivity() {
         sdkProc = null
     }
 
-    // ---------- 网页兜底：dsh web + 探测端口 ----------
+    // ---------- 网页模式：dsh web（自动端口 + 不开浏览器 + 抓 token 地址） ----------
 
     private fun startWeb() {
         if (!isEnvReady()) {
@@ -299,9 +344,11 @@ class MainActivity : FlutterActivity() {
         Thread {
             try {
                 status("正在启动网页版引擎...")
+                val port = findFreePort()
+                activePort = port
                 val cmd = "cd '${workDir.absolutePath}' && " +
                     "export LD_LIBRARY_PATH='${envDir.absolutePath}' && " +
-                    "exec '${nodeBin.absolutePath}' --expose-internals apps/cli/src/bin.ts web"
+                    "exec '${nodeBin.absolutePath}' --expose-internals apps/cli/src/bin.ts web --no-open --port $port"
                 val p = ProcessBuilder("/system/bin/sh", "-c", cmd)
                     .directory(workDir)
                     .redirectErrorStream(true)
@@ -332,8 +379,14 @@ class MainActivity : FlutterActivity() {
                     var line = r.readLine()
                     while (line != null) {
                         val s = line.trim()
-                        val m = Regex("https?://127\\.0\\.0\\.1:" + PORT + "[^\\s\"'<>]*").find(s)
-                        if (m != null) engineUrl = m.value
+                        remember(s)
+                        val m = Regex("https?://(?:127\\.0\\.0\\.1|localhost|0\\.0\\.0\\.0):\\d+[^\\s\"'<>]*").find(s)
+                        if (m != null) {
+                            engineUrl = m.value
+                                .replace("0.0.0.0", "127.0.0.1")
+                                .replace("localhost", "127.0.0.1")
+                            portFromUrl(engineUrl)?.let { activePort = it }
+                        }
                         line = r.readLine()
                     }
                 }
@@ -346,9 +399,24 @@ class MainActivity : FlutterActivity() {
         status("等待引擎响应...")
         val deadline = System.currentTimeMillis() + 180_000
         while (System.currentTimeMillis() < deadline) {
-            if (portOpen()) {
+            // 端口交给系统分配时，先从引擎日志里把端口读出来
+            if (activePort == 0 && engineUrl.isNotEmpty()) {
+                portFromUrl(engineUrl)?.let { activePort = it }
+            }
+            if (activePort != 0 && portOpen(activePort)) {
+                // 端口通了，最多再等 3 秒拿带 token 的完整地址
+                val readyAt = System.currentTimeMillis()
+                while (engineUrl.isEmpty() &&
+                    System.currentTimeMillis() - readyAt < 3000
+                ) {
+                    Thread.sleep(100)
+                }
                 status("引擎已就绪")
-                notifyEvent("webReady", engineUrl)
+                notifyEvent(
+                    "webReady",
+                    if (engineUrl.isNotEmpty()) engineUrl
+                    else "http://127.0.0.1:$activePort/?token="
+                )
                 return
             }
             if (p != null && !p.isAlive) {
@@ -356,7 +424,7 @@ class MainActivity : FlutterActivity() {
                 return
             }
             try {
-                Thread.sleep(400)
+                Thread.sleep(200)
             } catch (_: InterruptedException) {
                 return
             }
@@ -364,8 +432,8 @@ class MainActivity : FlutterActivity() {
         fail("引擎启动超时（180 秒）")
     }
 
-    private fun portOpen(): Boolean = try {
-        Socket().use { it.connect(InetSocketAddress("127.0.0.1", PORT), 300) }
+    private fun portOpen(port: Int = activePort): Boolean = try {
+        Socket().use { it.connect(InetSocketAddress("127.0.0.1", port), 300) }
         true
     } catch (_: Throwable) {
         false
