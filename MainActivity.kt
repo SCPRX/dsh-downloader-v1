@@ -106,6 +106,10 @@ class MainActivity : FlutterActivity() {
                         result.success(true)
                     }
                 }
+                "repairLinks" -> {
+                    repairLinks()
+                    result.success(true)
+                }
                 "startSdk" -> {
                     val apiKey = call.argument<String>("apiKey") ?: ""
                     startSdk(apiKey)
@@ -170,7 +174,7 @@ class MainActivity : FlutterActivity() {
     private fun isPortFree(port: Int): Boolean = try {
         java.net.ServerSocket().use { server ->
             server.reuseAddress = true
-            server.bind(InetSocketAddress("127.0.0.1", port))
+            server.bind(java.net.InetSocketAddress("127.0.0.1", port))
         }
         true
     } catch (_: Throwable) {
@@ -211,6 +215,11 @@ class MainActivity : FlutterActivity() {
                 var count = 0
                 val buf = ByteArray(64 * 1024)
                 val root = envDir.canonicalPath
+                // zip 里的符号链接（pnpm 的 node_modules 全靠它）解压后会变成小文本文件，
+                // 这里先记下来，解压完再按内容恢复成真正的符号链接
+                val linkCandidates = ArrayList<Pair<String, String>>()
+                val linkLike =
+                    Regex("^[.]{0,2}/?[A-Za-z0-9@._+/-]+$")
                 ZipInputStream(FileInputStream(zipFile)).use { z ->
                     while (true) {
                         val e = z.nextEntry ?: break
@@ -231,6 +240,19 @@ class MainActivity : FlutterActivity() {
                                 }
                             }
                             f.setExecutable(true, false)
+                            if (e.size in 1L..300L) {
+                                try {
+                                    val content = f.readText().trim()
+                                    if (content.isNotEmpty() &&
+                                        content.length <= 300 &&
+                                        !content.contains('\n') &&
+                                        linkLike.matches(content)
+                                    ) {
+                                        linkCandidates.add(f.absolutePath to content)
+                                    }
+                                } catch (_: Throwable) {
+                                }
+                            }
                             count++
                             if (count % 300 == 0) status("正在解压环境… 已解压 $count 个文件")
                         }
@@ -238,11 +260,30 @@ class MainActivity : FlutterActivity() {
                 }
                 nodeBin.setExecutable(true, false)
 
+                // 第二步：把符号链接恢复出来（node 找模块全靠它）
+                var links = 0
+                if (android.os.Build.VERSION.SDK_INT >= 26) {
+                    for ((path, target) in linkCandidates) {
+                        try {
+                            val f = File(path)
+                            val t = File(f.parentFile, target)
+                            if (!t.exists()) continue
+                            f.delete()
+                            java.nio.file.Files.createSymbolicLink(
+                                f.toPath(),
+                                java.nio.file.Paths.get(target)
+                            )
+                            links++
+                        } catch (_: Throwable) {
+                        }
+                    }
+                }
+
                 if (!isEnvReady()) {
                     fail("解压完成但在包里找不到 node 或 deepseek-harness")
                     return@Thread
                 }
-                status("解压完成，共 $count 个文件")
+                status("解压完成，共 $count 个文件，恢复 $links 个链接")
                 zipFile.delete()
                 notifyEvent("envReady", null)
             } catch (t: Throwable) {
@@ -297,6 +338,52 @@ class MainActivity : FlutterActivity() {
             } catch (t: Throwable) {
                 fail("运行库安装失败: ${t.message}")
             }
+        }.start()
+    }
+
+    // ---------- 修复 node_modules 里的符号链接（老环境重装也能修好） ----------
+
+    private fun repairLinks() {
+        Thread {
+            val marker = File(envDir, ".links-ok")
+            if (marker.exists()) {
+                notifyEvent("linksReady", null)
+                return@Thread
+            }
+            try {
+                status("正在修复运行环境…")
+                val linkLike = Regex("^[.]{0,2}/?[A-Za-z0-9@._+/-]+$")
+                var fixed = 0
+                if (android.os.Build.VERSION.SDK_INT >= 26) {
+                    envDir.walkTopDown().forEach { f ->
+                        try {
+                            if (!f.isFile) return@forEach
+                            val len = f.length()
+                            if (len < 1L || len > 300L) return@forEach
+                            val content = f.readText().trim()
+                            if (content.isEmpty() || content.length > 300) return@forEach
+                            if (content.contains('\n') || !linkLike.matches(content)) {
+                                return@forEach
+                            }
+                            val t = File(f.parentFile, content)
+                            if (!t.exists()) return@forEach
+                            if (t.canonicalPath == f.canonicalPath) return@forEach
+                            f.delete()
+                            java.nio.file.Files.createSymbolicLink(
+                                f.toPath(),
+                                java.nio.file.Paths.get(content)
+                            )
+                            fixed++
+                        } catch (_: Throwable) {
+                        }
+                    }
+                }
+                marker.writeText("ok")
+                status("环境修复完成，共 $fixed 个链接")
+            } catch (t: Throwable) {
+                status("环境修复出错: ${t.message}")
+            }
+            notifyEvent("linksReady", null)
         }.start()
     }
 
@@ -387,7 +474,7 @@ class MainActivity : FlutterActivity() {
         sdkProc = null
     }
 
-    // ---------- 网页模式：dsh web（自动端口 + 不开浏览器 + 抓 token 地址） ----------
+    // ---------- 网页兜底：dsh web + 探测端口 ----------
 
     private fun startWeb() {
         if (!isEnvReady()) {
