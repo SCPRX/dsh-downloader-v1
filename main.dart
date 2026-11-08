@@ -69,7 +69,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   ];
   static const List<String> _envNames = ['高速镜像', '极速镜像', '官方源'];
   /// 环境包的标准大小，用于判断源上是不是旧文件 / 下载是否完整
-  static const int _envSize = 923708522;
+  static const int _envSize = 151976697;
   int? _pinnedSrc;
   int _runId = 0;
   int _activeSrc = -1;
@@ -387,7 +387,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     setState(() {
       _status = start > 0
           ? "继续下载核心环境（已有 ${_mb(start)}）..."
-          : "首次启动，正在下载核心环境(约 850MB)...";
+          : "首次启动，正在下载核心环境(约 145MB)...";
     });
 
     unawaited(_keepAlive(true));
@@ -950,8 +950,9 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
 
   void _saveSettingsAndStart() {
     final key = _keyCtrl.text.trim();
-    final model =
-        _modelCtrl.text.trim().isEmpty ? "deepseek-flash" : _modelCtrl.text.trim();
+    final model = _modelCtrl.text.trim().isEmpty
+        ? "deepseek-flash"
+        : _modelCtrl.text.trim();
     setState(() {
       _apiKey = key;
       _model = model;
