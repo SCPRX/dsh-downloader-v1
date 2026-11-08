@@ -162,9 +162,8 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
           break;
         case 'webReady':
           final arg = call.arguments;
-          final url = (arg is String && arg.isNotEmpty)
-              ? arg
-              : "http://127.0.0.1:3090";
+          final url =
+              (arg is String && arg.isNotEmpty) ? arg : "http://127.0.0.1:3090";
           _openWeb(url);
           break;
         case 'log':
@@ -604,8 +603,8 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                   padding: EdgeInsets.fromLTRB(20, 14, 20, 4),
                   child: Align(
                     alignment: Alignment.centerLeft,
-                    child:
-                        Text("选择下载源", style: TextStyle(color: Colors.white70, fontSize: 13)),
+                    child: Text("选择下载源",
+                        style: TextStyle(color: Colors.white70, fontSize: 13)),
                   ),
                 ),
                 ListTile(
@@ -917,8 +916,9 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
 
   void _saveSettingsAndStart() {
     final key = _keyCtrl.text.trim();
-    final model =
-        _modelCtrl.text.trim().isEmpty ? "deepseek-flash" : _modelCtrl.text.trim();
+    final model = _modelCtrl.text.trim().isEmpty
+        ? "deepseek-flash"
+        : _modelCtrl.text.trim();
     setState(() {
       _apiKey = key;
       _model = model;
@@ -985,8 +985,8 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                                   strokeWidth: 3.0,
                                   backgroundColor: Colors.white12,
                                   color: const Color(0xFF00FFCC),
-                                  strokeAlign:
-                                      CircularProgressIndicator.strokeAlignCenter,
+                                  strokeAlign: CircularProgressIndicator
+                                      .strokeAlignCenter,
                                 ),
                               ),
                             ],
@@ -1090,7 +1090,8 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                     TextField(
                       controller: _keyCtrl,
                       obscureText: true,
-                      style: const TextStyle(color: Colors.white, fontSize: 14),
+                      style:
+                          const TextStyle(color: Colors.white, fontSize: 14),
                       decoration: const InputDecoration(
                         labelText: "DeepSeek API Key",
                         hintText: "sk-…",
