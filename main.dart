@@ -229,6 +229,7 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
       Future(() => _start());
       return;
     } catch (e) {
+      unawaited(_keepAlive(false));
       if (!mounted) return;
       setState(() {
         _failed = true;
@@ -328,7 +329,8 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     } finally {
       _downloading = false;
       _activeSrc = -1;
-      unawaited(_keepAlive(false));
+      // 前台服务不在这里撤：要一直挂到「引擎就绪/失败」，
+      // 这样后面的解压阶段也不会被系统杀掉
     }
   }
 
