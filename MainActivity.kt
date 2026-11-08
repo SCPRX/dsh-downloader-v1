@@ -54,8 +54,9 @@ class MainActivity : FlutterActivity() {
 
     private val envDir: File get() = File(filesDir, "dsh-env")
     private val nodeBin: File get() = File(envDir, "node")
-    private val cliEntry: File get() = File(envDir, "deepseek-harness/apps/cli/src/bin.ts")
-    private val workDir: File get() = File(envDir, "deepseek-harness")
+    // 装好版 harness 的入口（编译过的 JS，不是源码里的 bin.ts）
+    private val cliEntry: File get() = File(envDir, "node_modules/@deepseek-ai/dsh/lib/bin.js")
+    private val workDir: File get() = envDir
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // 必须在 super.onCreate 之前设置，让 Flutter 内容铺满整个窗口（含状态栏区域），
@@ -174,7 +175,7 @@ class MainActivity : FlutterActivity() {
     private fun isPortFree(port: Int): Boolean = try {
         java.net.ServerSocket().use { server ->
             server.reuseAddress = true
-            server.bind(java.net.InetSocketAddress("127.0.0.1", port))
+            server.bind(InetSocketAddress("127.0.0.1", port))
         }
         true
     } catch (_: Throwable) {
@@ -280,7 +281,7 @@ class MainActivity : FlutterActivity() {
                 }
 
                 if (!isEnvReady()) {
-                    fail("解压完成但在包里找不到 node 或 deepseek-harness")
+                    fail("解压完成但在包里找不到 node 或 bin.js")
                     return@Thread
                 }
                 status("解压完成，共 $count 个文件，恢复 $links 个链接")
@@ -406,7 +407,7 @@ class MainActivity : FlutterActivity() {
                     "export DSH_HOME='${filesDir.absolutePath}/.dsh' && " +
                     "export OPENSSL_CONF=/dev/null && " +
                     "export DEEPSEEK_API_KEY='$apiKey' && " +
-                    "exec '${nodeBin.absolutePath}' --expose-internals apps/cli/src/bin.ts --profile sdk"
+                    "exec '${nodeBin.absolutePath}' --expose-internals node_modules/@deepseek-ai/dsh/lib/bin.js --profile sdk"
                 val p = ProcessBuilder("/system/bin/sh", "-c", cmd)
                     .directory(workDir)
                     .redirectErrorStream(false)
@@ -499,7 +500,7 @@ class MainActivity : FlutterActivity() {
                     "export HOME='${filesDir.absolutePath}' && " +
                     "export DSH_HOME='${filesDir.absolutePath}/.dsh' && " +
                     "export OPENSSL_CONF=/dev/null && " +
-                    "exec '${nodeBin.absolutePath}' --expose-internals apps/cli/src/bin.ts web --no-open --port $port"
+                    "exec '${nodeBin.absolutePath}' --expose-internals node_modules/@deepseek-ai/dsh/lib/bin.js web --no-open --port $port"
                 val p = ProcessBuilder("/system/bin/sh", "-c", cmd)
                     .directory(workDir)
                     .redirectErrorStream(true)
