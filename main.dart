@@ -402,8 +402,8 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
           _srcInfo[i] = "$e";
           final next = order.indexOf(i) + 1;
           if (next < order.length && mounted) {
-            setState(() =>
-                _status = "${_envNames[i]} 不行，换 ${_envNames[order[next]]}...");
+            setState(() => _status =
+                "${_envNames[i]} 不行，换 ${_envNames[order[next]]}...");
           }
         }
       }
@@ -1123,8 +1123,8 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                       ),
                       child: Row(
                         children: [
-                          const Text("模型",
-                              style: TextStyle(
+                          _LeftText("模型",
+                              style: const TextStyle(
                                   color: Color(0x99FFFFFF), fontSize: 13)),
                           const SizedBox(width: 16),
                           Expanded(
@@ -1439,6 +1439,26 @@ class _SourceSheetState extends State<_SourceSheet> {
   @override
   Widget build(BuildContext context) =>
       widget.host.buildSourceSheetContent(context);
+}
+
+/// 左对齐的自绘文字（避免系统给 Text 画下划线）
+class _LeftText extends StatelessWidget {
+  final String text;
+  final TextStyle style;
+  const _LeftText(this.text, {required this.style});
+
+  @override
+  Widget build(BuildContext context) {
+    final tp = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: TextDirection.ltr,
+      maxLines: 1,
+    )..layout();
+    return CustomPaint(
+      size: Size(tp.width, tp.height),
+      painter: _TextDrawPainter(text, style),
+    );
+  }
 }
 
 /// 不用 Text 组件画状态文字，避免系统乱画下划线
