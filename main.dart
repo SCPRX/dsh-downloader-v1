@@ -121,12 +121,14 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
             _progress = 1.0;
             _status = "引擎已就绪";
           });
+          unawaited(_keepAlive(false));
           break;
         case 'failed':
           setState(() {
             _failed = true;
             _status = call.arguments as String;
           });
+          unawaited(_keepAlive(false));
           break;
       }
     });
@@ -263,6 +265,9 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
           : "首次启动，正在下载核心环境(约 850MB)...";
     });
 
+    // 挂一个前台服务，切后台/锁屏也能继续下
+    unawaited(_keepAlive(true));
+
     final runId = _runId;
 
     // 自动模式：先等全部源测完速，再直接连最快的那一个（不按固定顺序）
@@ -323,6 +328,16 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
     } finally {
       _downloading = false;
       _activeSrc = -1;
+      unawaited(_keepAlive(false));
+    }
+  }
+
+  /// 通知原生层挂/撤前台服务（切后台不中断下载）
+  Future<void> _keepAlive(bool on) async {
+    try {
+      await _platform.invokeMethod('keepAlive', {'on': on});
+    } catch (_) {
+      // 老版本原生层没有这个方法，忽略
     }
   }
 
