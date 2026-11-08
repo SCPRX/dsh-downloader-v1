@@ -14,17 +14,33 @@ jobs:
         flutter create --platforms android --project-name dshapp --org com.dsh build_app
         cp main.dart build_app/lib/main.dart
         cp pubspec.yaml build_app/pubspec.yaml
-        cp AndroidManifest.xml build_app/android/app/src/main/AndroidManifest.xml
         mkdir -p build_app/android/app/src/main/kotlin/com/dsh/dshapp
         cp MainActivity.kt build_app/android/app/src/main/kotlin/com/dsh/dshapp/MainActivity.kt
         mkdir -p build_app/assets
         cp logo.png build_app/assets/logo.png
         cd build_app
-        # Android 10+ 对 targetSdk>=29 的应用禁止执行私有目录里的文件，
-        # 而 node 是解压到 filesDir 再直接执行的（Termux 也是降到 28 才能跑）。
+        # 不再覆盖 Flutter 生成的 AndroidManifest（覆盖会丢 flutterEmbedding 和启动 Activity，
+        # 直接报 "deleted Android v1 embedding"）。改成只往里补前台服务和权限。
+        python3 - <<'PY'
+        import re
+        p = "android/app/src/main/AndroidManifest.xml"
+        s = open(p, encoding="utf-8").read()
+        s = s.replace('<application',
+                      '<application\n        android:usesCleartextTraffic="true"\n        android:largeHeap="true"', 1)
+        s = re.sub(r'android:label="[^"]*"', 'android:label="原生DSH"', s, count=1)
+        perms = ('    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n'
+                 '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />\n'
+                 '    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n')
+        s = s.replace('<application', perms + '    <application', 1)
+        svc = ('        <service\n'
+               '            android:name="com.dsh.dshapp.DownloadService"\n'
+               '            android:exported="false"\n'
+               '            android:foregroundServiceType="dataSync" />\n')
+        s = s.replace('</application>', svc + '    </application>', 1)
+        open(p, "w", encoding="utf-8").write(s)
+        PY
+        python3 -c "import xml.dom.minidom; xml.dom.minidom.parse('android/app/src/main/AndroidManifest.xml'); print('manifest ok')"
         sed -i -E 's/targetSdk *= *flutter\.targetSdkVersion/targetSdk = 28/' android/app/build.gradle.kts
-        # 但 AGP 的 lint 规则认为 targetSdk<33 是致命错误（ExpiredTargetSdkVersion），
-        # 会把构建直接判死，所以这里把 release 的 lint 关掉。
         printf '\nandroid {\n    lint {\n        abortOnError = false\n        checkReleaseBuilds = false\n    }\n}\n' >> android/app/build.gradle.kts
         flutter pub get
         flutter build apk --release --target-platform android-arm64
