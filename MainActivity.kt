@@ -310,6 +310,8 @@ class MainActivity : FlutterActivity() {
                 status("正在启动引擎...")
                 val cmd = "cd '${workDir.absolutePath}' && " +
                     "export LD_LIBRARY_PATH='${envDir.absolutePath}' && " +
+                    "export HOME='${filesDir.absolutePath}' && " +
+                    "export DSH_HOME='${filesDir.absolutePath}/.dsh' && " +
                     "export DEEPSEEK_API_KEY='$apiKey' && " +
                     "exec '${nodeBin.absolutePath}' --expose-internals apps/cli/src/bin.ts --profile sdk"
                 val p = ProcessBuilder("/system/bin/sh", "-c", cmd)
@@ -401,6 +403,8 @@ class MainActivity : FlutterActivity() {
                 activePort = port
                 val cmd = "cd '${workDir.absolutePath}' && " +
                     "export LD_LIBRARY_PATH='${envDir.absolutePath}' && " +
+                    "export HOME='${filesDir.absolutePath}' && " +
+                    "export DSH_HOME='${filesDir.absolutePath}/.dsh' && " +
                     "exec '${nodeBin.absolutePath}' --expose-internals apps/cli/src/bin.ts web --no-open --port $port"
                 val p = ProcessBuilder("/system/bin/sh", "-c", cmd)
                     .directory(workDir)
@@ -473,7 +477,7 @@ class MainActivity : FlutterActivity() {
                 return
             }
             if (p != null && !p.isAlive) {
-                fail("引擎进程已退出，请重试")
+                fail("引擎已退出：${lastLogText()}")
                 return
             }
             try {
