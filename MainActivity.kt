@@ -312,6 +312,7 @@ class MainActivity : FlutterActivity() {
                     "export LD_LIBRARY_PATH='${envDir.absolutePath}' && " +
                     "export HOME='${filesDir.absolutePath}' && " +
                     "export DSH_HOME='${filesDir.absolutePath}/.dsh' && " +
+                    "export OPENSSL_CONF=/dev/null && " +
                     "export DEEPSEEK_API_KEY='$apiKey' && " +
                     "exec '${nodeBin.absolutePath}' --expose-internals apps/cli/src/bin.ts --profile sdk"
                 val p = ProcessBuilder("/system/bin/sh", "-c", cmd)
@@ -405,6 +406,7 @@ class MainActivity : FlutterActivity() {
                     "export LD_LIBRARY_PATH='${envDir.absolutePath}' && " +
                     "export HOME='${filesDir.absolutePath}' && " +
                     "export DSH_HOME='${filesDir.absolutePath}/.dsh' && " +
+                    "export OPENSSL_CONF=/dev/null && " +
                     "exec '${nodeBin.absolutePath}' --expose-internals apps/cli/src/bin.ts web --no-open --port $port"
                 val p = ProcessBuilder("/system/bin/sh", "-c", cmd)
                     .directory(workDir)
