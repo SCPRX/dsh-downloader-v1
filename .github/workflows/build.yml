@@ -19,41 +19,6 @@ jobs:
         mkdir -p build_app/assets
         cp logo.png build_app/assets/logo.png
         cd build_app
-        # ---- 国内镜像：Gradle 发行版 + Maven 依赖，避免 GitHub 下载 504 卡死构建 ----
-        VER=$(grep -oE 'gradle-[0-9.]+-all\.zip' android/gradle/wrapper/gradle-wrapper.properties | head -1 | sed -E 's/gradle-(.*)-all\.zip/\1/')
-        echo "Gradle version: $VER"
-        if [ -n "$VER" ]; then
-          sed -i -E "s#^distributionUrl=.*#distributionUrl=https\\://mirrors.cloud.tencent.com/gradle/gradle-${VER}-all.zip#" android/gradle/wrapper/gradle-wrapper.properties
-        fi
-        grep distributionUrl android/gradle/wrapper/gradle-wrapper.properties
-        python3 - <<'PY'
-        def mirror_lines(kts):
-            urls = [
-                "https://maven.aliyun.com/repository/gradle-plugin",
-                "https://maven.aliyun.com/repository/public",
-                "https://maven.aliyun.com/repository/google",
-            ]
-            if kts:
-                return "".join('            maven { url = uri("%s") }\n' % u for u in urls)
-            return "".join('            maven { url "%s" }\n' % u for u in urls)
-
-        for p in [
-            "android/settings.gradle.kts",
-            "android/settings.gradle",
-            "android/build.gradle.kts",
-            "android/build.gradle",
-            "android/app/build.gradle.kts",
-            "android/app/build.gradle",
-        ]:
-            try:
-                s = open(p, encoding="utf-8").read()
-            except FileNotFoundError:
-                continue
-            lines = mirror_lines(p.endswith(".kts")).rstrip("\n")
-            s = s.replace("repositories {", "repositories {\n" + lines)
-            open(p, "w", encoding="utf-8").write(s)
-            print("mirror patched", p)
-        PY
         # 用 logo.png 生成桌面图标（沙箱里通常自带 ImageMagick，没有就跳过）
         if command -v convert >/dev/null 2>&1; then
           for spec in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
