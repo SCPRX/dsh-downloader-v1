@@ -162,8 +162,9 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
           break;
         case 'webReady':
           final arg = call.arguments;
-          final url =
-              (arg is String && arg.isNotEmpty) ? arg : "http://127.0.0.1:3090";
+          final url = (arg is String && arg.isNotEmpty)
+              ? arg
+              : "http://127.0.0.1:3090";
           _openWeb(url);
           break;
         case 'log':
@@ -593,67 +594,69 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      builder: (ctx) {
-        return SafeArea(
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(20, 14, 20, 4),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text("选择下载源",
-                        style: TextStyle(color: Colors.white70, fontSize: 13)),
-                  ),
-                ),
-                ListTile(
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 20),
-                  leading: const SizedBox(
-                      width: 24,
-                      child: Icon(Icons.speed,
-                          size: 20, color: Color(0xFF00FFCC))),
-                  title: const Text("自动测速",
-                      style: TextStyle(color: Colors.white)),
-                  trailing: _selectedSrc == -1
-                      ? const Icon(Icons.check_circle,
-                          color: Color(0xFF00FFCC))
-                      : null,
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    _autoRetest();
-                  },
-                ),
-                for (int i = 0; i < _envNames.length; i++)
-                  ListTile(
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 20),
-                    leading: const SizedBox(
-                        width: 24,
-                        child: Icon(Icons.link,
-                            size: 20, color: Color(0xCC00FFCC))),
-                    title: Text(_envNames[i],
-                        style: const TextStyle(color: Colors.white)),
-                    subtitle: Text(
-                        (_srcInfo[i] == null || _srcInfo[i]!.isEmpty)
-                            ? "未测"
-                            : _srcInfo[i]!,
-                        style: const TextStyle(
-                            color: Colors.white38, fontSize: 12)),
-                    trailing: _selectedSrc == i
-                        ? const Icon(Icons.check_circle,
-                            color: Color(0xFF00FFCC))
-                        : null,
-                    onTap: () {
-                      Navigator.pop(ctx);
-                      _switchSource(i);
-                    },
-                  ),
-                const SizedBox(height: 8),
-              ],
+      builder: (ctx) => _SourceSheet(this),
+    );
+  }
+
+  /// 换源面板的内容；由 _SourceSheet 定时重绘，测速结果能实时刷新
+  Widget buildSourceSheetContent(BuildContext ctx) {
+    return SafeArea(
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 14, 20, 4),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text("选择下载源",
+                    style: TextStyle(color: Colors.white70, fontSize: 13)),
+              ),
             ),
-          ),
-        );
-      },
+            ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+              leading: const SizedBox(
+                  width: 24,
+                  child:
+                      Icon(Icons.speed, size: 20, color: Color(0xFF00FFCC))),
+              title: const Text("自动测速",
+                  style: TextStyle(color: Colors.white)),
+              trailing: _selectedSrc == -1
+                  ? const Icon(Icons.check_circle, color: Color(0xFF00FFCC))
+                  : null,
+              onTap: () {
+                Navigator.pop(ctx);
+                _autoRetest();
+              },
+            ),
+            for (int i = 0; i < _envNames.length; i++)
+              ListTile(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+                leading: const SizedBox(
+                    width: 24,
+                    child: Icon(Icons.link,
+                        size: 20, color: Color(0xCC00FFCC))),
+                title: Text(_envNames[i],
+                    style: const TextStyle(color: Colors.white)),
+                subtitle: Text(
+                    (_srcInfo[i] == null || _srcInfo[i]!.isEmpty)
+                        ? "未测"
+                        : _srcInfo[i]!,
+                    style: const TextStyle(
+                        color: Colors.white38, fontSize: 12)),
+                trailing: _selectedSrc == i
+                    ? const Icon(Icons.check_circle,
+                        color: Color(0xFF00FFCC))
+                    : null,
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _switchSource(i);
+                },
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
     );
   }
 
@@ -1090,8 +1093,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                     TextField(
                       controller: _keyCtrl,
                       obscureText: true,
-                      style:
-                          const TextStyle(color: Colors.white, fontSize: 14),
+                      style: const TextStyle(color: Colors.white, fontSize: 14),
                       decoration: const InputDecoration(
                         labelText: "DeepSeek API Key",
                         hintText: "sk-…",
@@ -1406,6 +1408,37 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       ),
     );
   }
+}
+
+/// 换源面板：自己定时重绘，这样测速结果能边测边显示
+class _SourceSheet extends StatefulWidget {
+  final _AppRootState host;
+  const _SourceSheet(this.host);
+
+  @override
+  State<_SourceSheet> createState() => _SourceSheetState();
+}
+
+class _SourceSheetState extends State<_SourceSheet> {
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(milliseconds: 400), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) =>
+      widget.host.buildSourceSheetContent(context);
 }
 
 /// 不用 Text 组件画状态文字，避免系统乱画下划线
