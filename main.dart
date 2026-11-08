@@ -33,6 +33,9 @@ class MyApp extends StatelessWidget {
   }
 }
 
+/// 用户手动换源时用来打断正在进行的下载
+class _SwitchRequested implements Exception {}
+
 /// 一条聊天消息
 class ChatMsg {
   final String text;
@@ -68,6 +71,8 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   static const List<String> _envNames = ['极速镜像', '高速镜像', '备用镜像', '官方源'];
   int? _pinnedSrc;
   int _runId = 0;
+  int _activeSrc = -1;
+  int get _selectedSrc => _pinnedSrc ?? (_activeSrc >= 0 ? _activeSrc : -1);
   bool _downloading = false;
   String _speed = "";
   String _curName = "";
@@ -149,6 +154,9 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
               : "http://127.0.0.1:3080";
           _openWeb(url);
           break;
+        case 'log':
+          // 引擎底层日志，忽略即可
+          break;
       }
     });
     _bootstrap();
@@ -213,6 +221,9 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       }
       await _downloadEnv();
     } catch (e) {
+      _downloading = false;
+      _stopKeepAliveLoop();
+      unawaited(_keepAlive(false));
       setState(() {
         _failed = true;
         _status = "启动失败: $e";
@@ -222,6 +233,9 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
 
   Future<void> _afterEnvReady() async {
     if (!mounted) return;
+    // 解压已经结束，前台服务可以撤了
+    _stopKeepAliveLoop();
+    unawaited(_keepAlive(false));
     if (_apiKey.isEmpty) {
       setState(() {
         _phase = "setup";
@@ -264,13 +278,20 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     final String? zipPath = await _ch.invokeMethod<String>('envZipPath');
     if (zipPath == null || zipPath.isEmpty) throw '拿不到安装包路径';
     setState(() => _phase = 'env');
-    await _download(zipPath);
+    while (true) {
+      try {
+        await _download(zipPath);
+        break;
+      } on _SwitchRequested {
+        // 用户点了换源：带着新设置重新开始
+        continue;
+      }
+    }
     setState(() {
       _progress = 1.0;
       _status = "下载完成，正在解压(耗时较长)...";
     });
-    unawaited(_keepAlive(false));
-    _stopKeepAliveLoop();
+    // 前台服务先留着：解压阶段也需要保活，等环境就绪后再撤
     await _ch.invokeMethod('startExtract', {'path': zipPath});
   }
 
@@ -299,6 +320,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     _startKeepAliveLoop();
 
     final runId = _runId;
+    _downloading = true;
     if (_pinnedSrc == null) {
       if (_srcBps.isEmpty) await _testSources();
     }
@@ -308,13 +330,10 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       ..sort((a, b) => (_srcBps[b] ?? -1).compareTo(_srcBps[a] ?? -1));
 
     Object? lastError;
-    _downloading = true;
     try {
       for (final i in order) {
-        if (runId != _runId) {
-          lastError = '换源';
-          break;
-        }
+        if (runId != _runId) throw _SwitchRequested();
+        _activeSrc = i;
         setState(() {
           _speed = "";
           _curName = _envNames[i];
@@ -348,6 +367,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       await part.rename(zip.path);
     } finally {
       _downloading = false;
+      _activeSrc = -1;
     }
   }
 
@@ -381,7 +401,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
         (chunk) {
           if (runId != _runId) {
             sub.cancel();
-            if (!done.isCompleted) done.completeError('换源');
+            if (!done.isCompleted) done.completeError(_SwitchRequested());
             return;
           }
           sink.add(chunk);
@@ -487,6 +507,105 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     }
   }
 
+  // ---------------- 手动换源 ----------------
+
+  void _autoRetest() {
+    _pinnedSrc = null;
+    _srcBps.clear();
+    _srcInfo.clear();
+    _runId++;
+    setState(() {
+      _failed = false;
+      _speed = "";
+      _curName = "";
+      _status = "正在重新测速...";
+    });
+    if (!_downloading) unawaited(_bootstrap());
+  }
+
+  void _switchSource(int i) {
+    _pinnedSrc = i;
+    _runId++;
+    setState(() {
+      _failed = false;
+      _speed = "";
+      _status = "切换到 ${_envNames[i]} 下载...";
+    });
+    if (!_downloading) unawaited(_bootstrap());
+  }
+
+  void _showSourceSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF0B1220),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(20, 14, 20, 4),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text("选择下载源",
+                        style:
+                            TextStyle(color: Colors.white70, fontSize: 13)),
+                  ),
+                ),
+                ListTile(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+                  leading: const SizedBox(
+                      width: 24,
+                      child: Icon(Icons.speed,
+                          size: 20, color: Color(0xFF00FFCC))),
+                  title: const Text("自动测速",
+                      style: TextStyle(color: Colors.white)),
+                  trailing: _selectedSrc == -1
+                      ? const Icon(Icons.check_circle,
+                          color: Color(0xFF00FFCC))
+                      : null,
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _autoRetest();
+                  },
+                ),
+                for (int i = 0; i < _envNames.length; i++)
+                  ListTile(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+                    leading: const SizedBox(
+                        width: 24,
+                        child: Icon(Icons.link,
+                            size: 20, color: Color(0xCC00FFCC))),
+                    title: Text(_envNames[i],
+                        style: const TextStyle(color: Colors.white)),
+                    subtitle: Text(
+                        (_srcInfo[i] == null || _srcInfo[i]!.isEmpty)
+                            ? "未测"
+                            : _srcInfo[i]!,
+                        style: const TextStyle(
+                            color: Colors.white38, fontSize: 12)),
+                    trailing: _selectedSrc == i
+                        ? const Icon(Icons.check_circle,
+                            color: Color(0xFF00FFCC))
+                        : null,
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      _switchSource(i);
+                    },
+                  ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   // ---------------- 前台服务（下载/解压时保活） ----------------
 
   Future<void> _keepAlive(bool on) async {
@@ -520,31 +639,20 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
         'apiKey': _apiKey,
         'model': _model,
       });
-      Object? lastErr;
-      for (int attempt = 0; attempt < 30; attempt++) {
-        await Future.delayed(const Duration(milliseconds: 500));
-        if (!mounted) return;
-        try {
-          final res = await _rpc('initialize', {
-            'cwd': _appDir,
-            'provider': 'deepseek-official',
-            'model': _model,
-            'approvalRequests': false,
-          }, timeout: const Duration(seconds: 20));
-          if (res != null) {
-            _rpcReady = true;
-            setState(() {
-              _phase = "chat";
-              _failed = false;
-              _status = "";
-            });
-            return;
-          }
-        } catch (e) {
-          lastErr = e;
-        }
-      }
-      throw lastErr ?? '引擎没有响应';
+      // stdin 会先缓冲，引擎读完自然会回 initialize
+      final res = await _rpc('initialize', {
+        'cwd': _appDir,
+        'provider': 'deepseek-official',
+        'model': _model,
+        'approvalRequests': false,
+      }, timeout: const Duration(seconds: 120));
+      if (res == null) throw '引擎没有响应';
+      _rpcReady = true;
+      setState(() {
+        _phase = "chat";
+        _failed = false;
+        _status = "";
+      });
     } catch (e) {
       setState(() {
         _phase = "starting";
@@ -656,6 +764,8 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
         });
         _scrollToEnd();
       }
+    } else if (method == 'session.status') {
+      // 可以在这里显示"思考中"等状态，先不处理
     }
   }
 
@@ -858,6 +968,21 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                             onPressed: _switchToWeb,
                             child: const Text("用网页版打开",
                                 style: TextStyle(color: Colors.white54)),
+                          ),
+                        ],
+                        if (_downloading || _failed) ...[
+                          const SizedBox(height: 16),
+                          OutlinedButton(
+                            onPressed: _showSourceSheet,
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: Color(0x4400FFCC)),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(20)),
+                              minimumSize: const Size(120, 40),
+                            ),
+                            child: const Text("换源",
+                                style: TextStyle(
+                                    color: Color(0xFF00FFCC), fontSize: 14)),
                           ),
                         ],
                       ],
