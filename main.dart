@@ -63,12 +63,13 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
 
   // ---------- 下载 ----------
   static const List<String> _envUrls = [
-    'https://gh-proxy.com/https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/env.zip',
     'https://ghfast.top/https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/env.zip',
-    'https://ghproxy.net/https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/env.zip',
+    'https://gh-proxy.com/https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/env.zip',
     'https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/env.zip',
   ];
-  static const List<String> _envNames = ['极速镜像', '高速镜像', '备用镜像', '官方源'];
+  static const List<String> _envNames = ['高速镜像', '极速镜像', '官方源'];
+  /// 环境包的标准大小，用于判断源上是不是旧文件 / 下载是否完整
+  static const int _envSize = 923708522;
   int? _pinnedSrc;
   int _runId = 0;
   int _activeSrc = -1;
@@ -362,6 +363,11 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     }
 
     int start = await part.exists() ? await part.length() : 0;
+    if (start >= _envSize) {
+      // 已经是完整大小但上次解压失败：说明是坏包，删掉重下
+      await part.delete();
+      start = 0;
+    }
 
     setState(() {
       _status = start > 0
@@ -409,8 +415,11 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       }
       if (lastError != null) throw lastError;
 
-      final bool partOk = await part.exists() && await part.length() >= 1024;
-      if (!partOk) throw '下载文件不存在或不完整';
+      final bool partOk = await part.exists() && await part.length() == _envSize;
+      if (!partOk) {
+        if (await part.exists()) await part.delete();
+        throw '下载的文件大小不对（可能是镜像的旧文件），已删除，请重试';
+      }
       final head = await part.openRead(0, 2).first;
       if (head.length < 2 || head[0] != 0x50 || head[1] != 0x4B) {
         await part.delete();
@@ -435,12 +444,19 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       if (resp.statusCode != 200 && resp.statusCode != 206) {
         throw 'HTTP ${resp.statusCode}';
       }
+      if (resp.statusCode == 200) {
+        final len = resp.contentLength;
+        if (len != null && len > 0 && len != _envSize) {
+          throw '这个源上是旧文件';
+        }
+      }
       int totalBytes = 0;
       IOSink sink;
       int received = start;
       if (resp.statusCode == 206) {
         totalBytes = _totalFromRange(resp.headers['content-range']) ??
             (resp.contentLength ?? 0) + start;
+        if (totalBytes != _envSize) throw '这个源上是旧文件';
         sink = part.openWrite(mode: FileMode.append);
       } else {
         received = 0;
