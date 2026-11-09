@@ -999,8 +999,134 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   }
 
   Widget _buildSplash() {
-    final logo = math.min(126.0, MediaQuery.sizeOf(context).width * 0.30);
+    final size = MediaQuery.sizeOf(context);
+    final landscape = size.width > size.height;
+    final short = math.min(size.width, size.height);
+    final s = (short / 400).clamp(0.85, 1.5);
+    final logo = (short * 0.24).clamp(80.0, 130.0);
     final showBar = _progress > 0 || _downloading;
+
+    final texts = Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _CenterText("落锤",
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 20 * s,
+              height: 1.3,
+              letterSpacing: 4 * s,
+              fontWeight: FontWeight.w600,
+            )),
+        SizedBox(height: 8 * s),
+        _CenterText("DeepSeek Harness",
+            style: TextStyle(
+              color: const Color(0x66FFFFFF),
+              fontSize: 11.5 * s,
+              height: 1.4,
+              letterSpacing: 1 * s,
+            )),
+        SizedBox(height: (landscape ? 20 : 34) * s),
+        if (showBar) ...[
+          SizedBox(
+            width: math.min(260.0 * s, size.width * (landscape ? 0.36 : 0.7)),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: LinearProgressIndicator(
+                value: _progress > 0 ? _progress : null,
+                minHeight: 5,
+                backgroundColor: Colors.white10,
+                color: const Color(0xFF00FFCC),
+              ),
+            ),
+          ),
+          SizedBox(height: 16 * s),
+        ],
+        _CenterText(_status,
+            style: TextStyle(
+              color: const Color(0xCCFFFFFF),
+              fontSize: 13 * s,
+              height: 1.6,
+              letterSpacing: 0.6 * s,
+            )),
+        if (_downloading && _curName.isNotEmpty) ...[
+          SizedBox(height: 8 * s),
+          _CenterText(
+              "$_curName · ${_speed.isEmpty ? "连接中…" : _speed}",
+              style: TextStyle(
+                color: const Color(0x80FFFFFF),
+                fontSize: 12 * s,
+                height: 1.5,
+              )),
+        ],
+        SizedBox(height: 10 * s),
+        if (!_failed)
+          _CenterText("首次启动需要准备运行环境，请耐心等待",
+              style: TextStyle(
+                color: const Color(0x40FFFFFF),
+                fontSize: 11 * s,
+                height: 1.5,
+              )),
+        if (_failed) ...[
+          SizedBox(height: 8 * s),
+          _ActionButton(label: "重试", primary: true, onTap: _bootstrap),
+          SizedBox(height: 10 * s),
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 10 * s,
+            runSpacing: 8 * s,
+            children: [
+              _ActionButton(
+                  label: "查看引擎日志", primary: false, onTap: _showEngineLog),
+              _ActionButton(label: "网页版", primary: false, onTap: _switchToWeb),
+            ],
+          ),
+        ],
+        if (_downloading || _failed) ...[
+          SizedBox(height: 16 * s),
+          _ActionButton(label: "换源", primary: false, onTap: _showSourceSheet),
+        ],
+      ],
+    );
+
+    final logoBox = Container(
+      width: logo * 1.5,
+      height: logo * 1.5,
+      decoration: const BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: RadialGradient(
+          colors: [Color(0x3300FFCC), Color(0x0000FFCC)],
+          stops: [0.30, 1.0],
+        ),
+      ),
+      alignment: Alignment.center,
+      child: SizedBox(
+        width: logo,
+        height: logo,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Image.asset('assets/logo.png',
+                width: logo,
+                height: logo,
+                fit: BoxFit.contain,
+                color: Colors.white,
+                colorBlendMode: BlendMode.srcIn),
+            if (showBar)
+              SizedBox(
+                width: logo + 14,
+                height: logo + 14,
+                child: CircularProgressIndicator(
+                  value: _progress > 0 ? _progress : null,
+                  strokeWidth: 2.2,
+                  backgroundColor: Colors.white10,
+                  color: const Color(0xFF00FFCC),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+
     return Container(
       color: const Color(0xFF03060A),
       child: Stack(
@@ -1014,144 +1140,37 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                 child: ConstrainedBox(
                   constraints: BoxConstraints(minHeight: c.maxHeight),
                   child: Padding(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 30, vertical: 28),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Container(
-                          width: logo * 1.5,
-                          height: logo * 1.5,
-                          decoration: const BoxDecoration(
-                            shape: BoxShape.circle,
-                            gradient: RadialGradient(
-                              colors: [Color(0x3300FFCC), Color(0x0000FFCC)],
-                              stops: [0.30, 1.0],
-                            ),
-                          ),
-                          alignment: Alignment.center,
-                          child: SizedBox(
-                            width: logo,
-                            height: logo,
-                            child: Stack(
-                              alignment: Alignment.center,
+                    padding: EdgeInsets.symmetric(
+                      horizontal: 24 * s,
+                      vertical: landscape ? 10 * s : 24 * s,
+                    ),
+                    child: Center(
+                      child: landscape
+                          ? Row(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.center,
                               children: [
-                                Image.asset('assets/logo.png',
-                                    width: logo,
-                                    height: logo,
-                                    fit: BoxFit.contain,
-                                    color: Colors.white,
-                                    colorBlendMode: BlendMode.srcIn),
-                                if (showBar)
-                                  SizedBox(
-                                    width: logo + 14,
-                                    height: logo + 14,
-                                    child: CircularProgressIndicator(
-                                      value: _progress > 0 ? _progress : null,
-                                      strokeWidth: 2.2,
-                                      backgroundColor: Colors.white10,
-                                      color: const Color(0xFF00FFCC),
-                                    ),
-                                  ),
+                                logoBox,
+                                SizedBox(width: 28 * s),
+                                ConstrainedBox(
+                                  constraints: BoxConstraints(
+                                      maxWidth: size.width * 0.48),
+                                  child: texts,
+                                ),
+                              ],
+                            )
+                          : Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                logoBox,
+                                SizedBox(height: 18 * s),
+                                ConstrainedBox(
+                                  constraints: BoxConstraints(
+                                      maxWidth: size.width * 0.88),
+                                  child: texts,
+                                ),
                               ],
                             ),
-                          ),
-                        ),
-                        const SizedBox(height: 30),
-                        _CenterText("落锤",
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 20,
-                              height: 1.3,
-                              letterSpacing: 4.0,
-                              fontWeight: FontWeight.w600,
-                            )),
-                        const SizedBox(height: 10),
-                        _CenterText("DeepSeek Harness · 本地引擎",
-                            style: const TextStyle(
-                              color: Color(0x66FFFFFF),
-                              fontSize: 11.5,
-                              height: 1.4,
-                              letterSpacing: 1.0,
-                            )),
-                        const SizedBox(height: 38),
-                        if (showBar) ...[
-                          SizedBox(
-                            width: math.min(260.0, c.maxWidth * 0.72),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(8),
-                              child: LinearProgressIndicator(
-                                value: _progress > 0 ? _progress : null,
-                                minHeight: 5,
-                                backgroundColor: Colors.white10,
-                                color: const Color(0xFF00FFCC),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 20),
-                        ],
-                        _CenterText(_status,
-                            style: const TextStyle(
-                              color: Color(0xCCFFFFFF),
-                              fontSize: 13,
-                              height: 1.6,
-                              letterSpacing: 0.6,
-                            )),
-                        if (_downloading && _curName.isNotEmpty) ...[
-                          const SizedBox(height: 10),
-                          _CenterText(
-                              "$_curName · ${_speed.isEmpty ? "连接中…" : _speed}",
-                              style: const TextStyle(
-                                color: Color(0x80FFFFFF),
-                                fontSize: 12,
-                                height: 1.5,
-                                letterSpacing: 0.4,
-                              )),
-                        ],
-                        const SizedBox(height: 12),
-                        if (!_failed)
-                          _CenterText("首次启动需要准备运行环境，请耐心等待",
-                              style: const TextStyle(
-                                color: Color(0x40FFFFFF),
-                                fontSize: 11,
-                                height: 1.5,
-                                letterSpacing: 0.3,
-                              )),
-                        if (_failed) ...[
-                          const SizedBox(height: 10),
-                          _ActionButton(
-                            label: "重试",
-                            primary: true,
-                            onTap: _bootstrap,
-                          ),
-                          const SizedBox(height: 10),
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              _ActionButton(
-                                label: "查看引擎日志",
-                                primary: false,
-                                onTap: _showEngineLog,
-                              ),
-                              const SizedBox(width: 10),
-                              _ActionButton(
-                                label: "网页版",
-                                primary: false,
-                                onTap: _switchToWeb,
-                              ),
-                            ],
-                          ),
-                        ],
-                        if (_downloading || _failed) ...[
-                          const SizedBox(height: 18),
-                          _ActionButton(
-                            label: "换源",
-                            primary: false,
-                            onTap: _showSourceSheet,
-                          ),
-                        ],
-                      ],
                     ),
                   ),
                 ),
