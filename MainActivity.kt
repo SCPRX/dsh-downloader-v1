@@ -33,6 +33,7 @@ class MainActivity : FlutterActivity() {
         @Volatile var sdkProc: Process? = null
         @Volatile var sdkReaderRunning = false
         @Volatile var starting = false
+        @Volatile var engineReady = false
         @Volatile var engineUrl = ""
         @Volatile var activePort = BASE_PORT
         val lastLog = ArrayDeque<String>()
@@ -125,6 +126,11 @@ class MainActivity : FlutterActivity() {
                     result.success(true)
                 }
                 "engineAlive" -> result.success(sdkProc?.isAlive == true && sdkReaderRunning)
+                "setEngineReady" -> {
+                    engineReady = call.argument<Boolean>("ready") ?: true
+                    result.success(true)
+                }
+                "engineReady" -> result.success(engineReady)
                 "killEngine" -> {
                     killSdk()
                     result.success(true)
@@ -550,6 +556,7 @@ class MainActivity : FlutterActivity() {
         }
         sdkProc = null
         sdkReaderRunning = false
+        engineReady = false
     }
 
     private fun startWeb() {
