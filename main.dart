@@ -256,17 +256,12 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     }
     final bool alive = await _ch.invokeMethod<bool>('engineAlive') ?? false;
     if (alive) {
-      if (_sessionId.isEmpty) {
-        _sessionId = 's${DateTime.now().millisecondsSinceEpoch}';
-      }
-      bool ok = false;
-      try {
-        await _rpc('session/working-directory/get', {'sessionId': _sessionId},
-            timeout: const Duration(seconds: 8));
-        ok = true;
-      } catch (_) {}
-      if (ok) {
+      final bool ready = await _ch.invokeMethod<bool>('engineReady') ?? false;
+      if (ready) {
         _rpcReady = true;
+        if (_sessionId.isEmpty) {
+          _sessionId = 's${DateTime.now().millisecondsSinceEpoch}';
+        }
         _startKeepAliveLoop(text: "落锤 运行中 · 可切到后台");
         setState(() {
           _phase = "chat";
@@ -744,6 +739,9 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       if (res == null) throw '引擎没有响应';
       _rpcReady = true;
       _sessionId = 's${DateTime.now().millisecondsSinceEpoch}';
+      try {
+        await _ch.invokeMethod('setEngineReady', {'ready': true});
+      } catch (_) {}
       _startupTimer?.cancel();
 
       _startKeepAliveLoop(text: "落锤 运行中 · 可切到后台");
@@ -959,6 +957,16 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       _chunkSeen = false;
     });
     _scrollToEnd();
+    Timer(const Duration(seconds: 90), () {
+      if (!mounted) return;
+      if (_sending && _streamText.isEmpty) {
+        setState(() {
+          _sending = false;
+          _msgs.add(ChatMsg("引擎 90 秒没有回应，可以先点右上角「网页版」，或重启 App 再试", false));
+        });
+        _scrollToEnd();
+      }
+    });
     try {
       await _rpc('session/query', {
         'sessionId': _sessionId,
