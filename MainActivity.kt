@@ -121,6 +121,7 @@ class MainActivity : FlutterActivity() {
                     startWeb()
                     result.success(true)
                 }
+                "engineAlive" -> result.success(sdkProc?.isAlive == true)
                 "openEngine" -> {
                     val url = call.argument<String>("url") ?: "http://127.0.0.1:$activePort"
                     openEngine(url)
