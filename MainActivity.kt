@@ -365,9 +365,11 @@ class MainActivity : FlutterActivity() {
                     return@Thread
                 }
                 status("解压完成，共 $count 个文件，恢复 $links 个链接")
+                logEngine("[env] extract done, $count files, $links links")
                 zipFile.delete()
                 notifyEvent("envReady", null)
             } catch (t: Throwable) {
+                logEngine("[err] extract fail: " + t.message)
                 try {
                     zipFile.delete()
                 } catch (_: Throwable) {
@@ -487,11 +489,13 @@ class MainActivity : FlutterActivity() {
                     "DEEPSEEK_API_KEY='$apiKey' " +
                     "/opt/node/bin/node --expose-internals " +
                     "/opt/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js --profile sdk"
+                logEngine("[cmd] " + cmd)
                 val p = ProcessBuilder("/system/bin/sh", "-c", cmd)
                     .directory(workDir)
                     .redirectErrorStream(false)
                     .start()
                 sdkProc = p
+                logEngine("[start] pid=" + p.pid())
 
                 Thread {
                     try {
@@ -528,10 +532,12 @@ class MainActivity : FlutterActivity() {
                 }.start()
 
                 val code = p.waitFor()
+                logEngine("[exit] code=" + code)
                 if (sdkProc === p) {
                     fail("引擎退出(code=$code)：${lastLogText()}")
                 }
             } catch (t: Throwable) {
+                logEngine("[err] start fail: " + t.message)
                 fail("引擎启动失败: ${t.message}")
             }
         }.start()
@@ -589,6 +595,7 @@ class MainActivity : FlutterActivity() {
                     "/usr/bin/env HOME=/root DSH_HOME=/root/.dsh " +
                     "/opt/node/bin/node --expose-internals " +
                     "/opt/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js web --no-open --port $port"
+                logEngine("[webcmd] " + cmd)
                 val p = ProcessBuilder("/system/bin/sh", "-c", cmd)
                     .directory(workDir)
                     .redirectErrorStream(true)
