@@ -63,13 +63,13 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
 
   // ---------- 下载 ----------
   static const List<String> _envUrls = [
-    'https://ghfast.top/https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/env.zip',
-    'https://gh-proxy.com/https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/env.zip',
-    'https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/env.zip',
+    'https://ghfast.top/https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/apk.zip',
+    'https://gh-proxy.com/https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/apk.zip',
+    'https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/apk.zip',
   ];
   static const List<String> _envNames = ['高速镜像', '极速镜像', '官方源'];
   /// 环境包的标准大小，用于判断源上是不是旧文件 / 下载是否完整
-  static const int _envSize = 151976740;
+  static const int _envSize = 207615322;
   int? _pinnedSrc;
   int _runId = 0;
   int _activeSrc = -1;
@@ -91,6 +91,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   static const List<String> _models = ['deepseek-flash', 'deepseek-v4-pro'];
   bool _testing = false;
   String _testResult = "";
+  String _engineLog = "";
 
   // ---------- 设置 ----------
   String _apiKey = "";
@@ -258,7 +259,6 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     unawaited(_keepAlive(false));
     try {
       await _ensureLibs();
-      await _repairLinks();
     } catch (_) {
       return;
     }
@@ -273,11 +273,12 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     await _startEngine();
   }
 
-  // ---------------- 运行库（node 缺的 .so） ----------------
+  // ---------------- 运行库（旧方案兼容） ----------------
 
   Future<void> _ensureLibs() async {
-    final libz = File("$_appDir/dsh-env/libz.so.1");
-    if (await libz.exists()) return;
+    // 新运行时（proot + Linux 版 node/harness）自带全部库，别再补
+    final guestNode = File("$_appDir/dsh-env/rootfs/opt/node/bin/node");
+    if (await guestNode.exists()) return;
 
     setState(() {
       _phase = "starting";
@@ -309,7 +310,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     }
   }
 
-  /// 让原生层把 node_modules 里的符号链接修好（老环境没有链接，node 找不到模块）
+  /// 让原生层把符号链接修好（旧方案兼容）
   Future<void> _repairLinks() async {
     _linksDone = Completer<void>();
     await _ch.invokeMethod('repairLinks');
@@ -389,7 +390,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     setState(() {
       _status = start > 0
           ? "继续下载核心环境（已有 ${_mb(start)}）..."
-          : "首次启动，正在下载核心环境(约 145MB)...";
+          : "首次启动，正在下载核心环境(约 198MB)...";
     });
 
     unawaited(_keepAlive(true));
@@ -713,7 +714,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     _keepAliveTimer = null;
   }
 
-  // ---------------- 原生引擎（dsh --profile sdk） ----------------
+  // ---------------- 原生引擎（proot 里跑 dsh --profile sdk） ----------------
 
   Future<void> _startEngine() async {
     setState(() {
@@ -721,7 +722,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       _failed = false;
       _status = "正在启动引擎…";
     });
-    // 引擎在手机上首次启动要加载很多模块，可能比较久，这里显示已等待秒数
+    // 引擎首次启动要加载很多模块，可能比较久，这里显示已等待秒数
     var secs = 0;
     _startupTimer?.cancel();
     _startupTimer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -761,6 +762,43 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       _stopKeepAliveLoop();
       unawaited(_keepAlive(false));
     }
+  }
+
+  /// 取引擎日志（失败排查用）
+  Future<void> _showEngineLog() async {
+    String log = "";
+    try {
+      log = (await _ch.invokeMethod<String>('readEngineLog')) ?? "";
+    } catch (e) {
+      log = "读取失败: $e";
+    }
+    if (!mounted) return;
+    _engineLog = log;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF0B1220),
+        title: const Text("引擎日志",
+            style: TextStyle(color: Colors.white, fontSize: 15)),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: 420,
+          child: SingleChildScrollView(
+            child: SelectableText(
+              _engineLog.isEmpty ? "(空)" : _engineLog,
+              style: const TextStyle(
+                  color: Colors.white70, fontSize: 11, height: 1.35),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("关闭", style: TextStyle(color: Color(0xFF00FFCC))),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<Map<String, dynamic>?> _rpc(String method, Map<String, dynamic> params,
@@ -1062,6 +1100,11 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                             onPressed: _bootstrap,
                             child: const Text("重试",
                                 style: TextStyle(color: Color(0xFF00FFCC))),
+                          ),
+                          TextButton(
+                            onPressed: _showEngineLog,
+                            child: const Text("查看引擎日志",
+                                style: TextStyle(color: Colors.white70)),
                           ),
                           TextButton(
                             onPressed: _switchToWeb,
