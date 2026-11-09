@@ -87,6 +87,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   bool _testing = false;
   String _testResult = "";
   String _engineLog = "";
+  String _nativeFailMsg = "";
 
   String _apiKey = "";
   String _model = "deepseek-flash";
@@ -136,6 +137,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
           setState(() => _status = call.arguments as String);
           break;
         case 'failed':
+          _nativeFailMsg = call.arguments as String;
           setState(() {
             _failed = true;
             _status = call.arguments as String;
@@ -713,6 +715,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       _failed = false;
       _status = "正在启动引擎…";
     });
+    _nativeFailMsg = "";
     _startKeepAliveLoop(text: "引擎启动中，请稍候…");
 
     var secs = 0;
@@ -755,7 +758,8 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       setState(() {
         _phase = "starting";
         _failed = true;
-        _status = "引擎启动失败: $e";
+        _status = "引擎启动失败: $e" +
+            (_nativeFailMsg.isEmpty ? "" : "\n原生: $_nativeFailMsg");
       });
       _stopKeepAliveLoop();
       unawaited(_keepAlive(false));
