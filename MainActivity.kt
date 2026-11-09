@@ -137,6 +137,8 @@ class MainActivity : FlutterActivity() {
                 }
                 "keepAlive" -> {
                     val on = call.argument<Boolean>("on") ?: false
+                    val text = call.argument<String>("text")
+                    if (text != null) DownloadService.currentText = text
                     if (on) startKeepAlive() else stopKeepAlive()
                     result.success(true)
                 }
@@ -706,17 +708,21 @@ class MainActivity : FlutterActivity() {
 }
 
 /**
- * 下载/解压期间的前台服务：挂一个通知，让系统把进程当成「正在干活」，
+ * 下载/解压/运行期间的前台服务：挂一个通知，让系统把进程当成「正在干活」，
  * 切到后台或锁屏时不会被当缓存进程杀掉。
  */
 class DownloadService : android.app.Service() {
+    companion object {
+        @Volatile var currentText: String = "正在准备环境，请勿清理后台…"
+    }
+
     private var wakeLock: android.os.PowerManager.WakeLock? = null
 
     override fun onBind(intent: Intent?): android.os.IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val title = "原生 DSH"
-        val text = "正在准备环境，请勿清理后台…"
+        val text = currentText
         val icon = android.R.drawable.stat_sys_download
         // 点通知回到 App
         val pi = android.app.PendingIntent.getActivity(
@@ -730,7 +736,7 @@ class DownloadService : android.app.Service() {
             nm?.createNotificationChannel(
                 android.app.NotificationChannel(
                     "dsh_download",
-                    "下载",
+                    "运行状态",
                     android.app.NotificationManager.IMPORTANCE_LOW
                 )
             )
