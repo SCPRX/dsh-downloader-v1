@@ -718,6 +718,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       }, timeout: const Duration(minutes: 10));
       if (res == null) throw '引擎没有响应';
       _rpcReady = true;
+      _sessionId = 's${DateTime.now().millisecondsSinceEpoch}';
       _startupTimer?.cancel();
 
       _startKeepAliveLoop(text: "落锤 运行中 · 可切到后台");
@@ -919,10 +920,10 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     _scrollToEnd();
     try {
       await _rpc('session/query', {
+        'sessionId': _sessionId,
         'contentBlocks': [
           {'type': 'text', 'text': text}
         ],
-        if (_sessionId.isNotEmpty) 'sessionId': _sessionId,
       }, timeout: const Duration(minutes: 10));
     } catch (e) {
       setState(() {
