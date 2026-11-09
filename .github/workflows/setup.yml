@@ -1,0 +1,52 @@
+name: Init Android Project
+on: [workflow_dispatch]
+permissions:
+  contents: write
+jobs:
+  init:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-java@v4
+      with: { java-version: '17', distribution: 'temurin' }
+    - uses: subosito/flutter-action@v2
+      with: { channel: 'stable' }
+    - name: Generate android project
+      run: |
+        flutter create --platforms android --project-name dshapp --org com.dsh tmp_app
+        rm -rf android
+        cp -r tmp_app/android .
+        rm -rf tmp_app
+        mkdir -p android/app/src/main/kotlin/com/dsh/dshapp
+        cp MainActivity.kt android/app/src/main/kotlin/com/dsh/dshapp/MainActivity.kt
+        for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+          cp "ic_launcher-$d.png" "android/app/src/main/res/mipmap-$d/ic_launcher.png"
+        done
+        python3 - <<'PY'
+        import re
+        p = "android/app/src/main/AndroidManifest.xml"
+        s = open(p, encoding="utf-8").read()
+        s = s.replace('<application',
+                      '<application\n        android:usesCleartextTraffic="true"\n        android:largeHeap="true"', 1)
+        s = re.sub(r'android:label="[^"]*"', 'android:label="落锤"', s, count=1)
+        perms = ('    <uses-permission android:name="android.permission.INTERNET" />\n'
+                 '    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />\n'
+                 '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n'
+                 '    <uses-permission android:name="android.permission.WAKE_LOCK" />\n'
+                 '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />\n'
+                 '    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n')
+        s = s.replace('<application', perms + '    <application', 1)
+        svc = ('        <service\n'
+               '            android:name="com.dsh.dshapp.DownloadService"\n'
+               '            android:exported="false"\n'
+               '            android:foregroundServiceType="dataSync" />\n')
+        s = s.replace('</application>', svc + '    </application>', 1)
+        open(p, "w", encoding="utf-8").write(s)
+        PY
+        sed -i -E 's/targetSdk *= *flutter\.targetSdkVersion/targetSdk = 28/' android/app/build.gradle.kts
+        printf '\nandroid {\n    lint {\n        abortOnError = false\n        checkReleaseBuilds = false\n    }\n}\n' >> android/app/build.gradle.kts
+        git config user.name "dsh-builder"
+        git config user.email "dsh@example.com"
+        git add android
+        git commit -m "add android project" || echo "nothing to commit"
+        git push
