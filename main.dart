@@ -1014,36 +1014,43 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
 
   Widget _buildSplash() {
     final size = MediaQuery.sizeOf(context);
+    final landscape = size.width > size.height;
     final short = math.min(size.width, size.height);
     final s = (short / 400).clamp(0.85, 1.5);
-    final logo = (short * 0.22).clamp(72.0, 118.0);
+    final pad = 20 * s;
+    final avail = math.max(size.width - pad * 2, 200.0);
+    final logo = (short * 0.22).clamp(64.0, 110.0);
+    final logoW = logo * 1.5;
+    final gap = 24 * s;
+    double textW = avail - logoW - gap;
+    final sideBySide = landscape || textW >= 150 * s;
+    if (!sideBySide) textW = avail;
     final showBar = _progress > 0 || _downloading;
-    final textWidth = size.width * (size.width > size.height ? 0.46 : 0.54);
 
-    final texts = Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _CenterText("落锤",
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 20 * s,
-              height: 1.3,
-              letterSpacing: 4 * s,
-              fontWeight: FontWeight.w600,
-            )),
-        SizedBox(height: 8 * s),
-        _CenterText("DeepSeek Harness",
-            style: TextStyle(
-              color: const Color(0x66FFFFFF),
-              fontSize: 11.5 * s,
-              height: 1.4,
-              letterSpacing: 1 * s,
-            )),
-        SizedBox(height: 26 * s),
-        if (showBar) ...[
-          SizedBox(
-            width: math.min(240.0 * s, textWidth),
-            child: ClipRRect(
+    final texts = SizedBox(
+      width: textW,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _CenterText("落锤",
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 20 * s,
+                height: 1.3,
+                letterSpacing: 4 * s,
+                fontWeight: FontWeight.w600,
+              )),
+          SizedBox(height: 8 * s),
+          _CenterText("DeepSeek Harness",
+              style: TextStyle(
+                color: const Color(0x66FFFFFF),
+                fontSize: 11.5 * s,
+                height: 1.4,
+                letterSpacing: 1 * s,
+              )),
+          SizedBox(height: 26 * s),
+          if (showBar) ...[
+            ClipRRect(
               borderRadius: BorderRadius.circular(8),
               child: LinearProgressIndicator(
                 value: _progress > 0 ? _progress : null,
@@ -1052,59 +1059,60 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                 color: const Color(0xFF00FFCC),
               ),
             ),
-          ),
-          SizedBox(height: 14 * s),
-        ],
-        _CenterText(_status,
-            style: TextStyle(
-              color: const Color(0xCCFFFFFF),
-              fontSize: 13 * s,
-              height: 1.6,
-              letterSpacing: 0.6 * s,
-            )),
-        if (_downloading && _curName.isNotEmpty) ...[
-          SizedBox(height: 8 * s),
-          _CenterText(
-              "$_curName · ${_speed.isEmpty ? "连接中…" : _speed}",
+            SizedBox(height: 14 * s),
+          ],
+          _CenterText(_status,
               style: TextStyle(
-                color: const Color(0x80FFFFFF),
-                fontSize: 12 * s,
-                height: 1.5,
+                color: const Color(0xCCFFFFFF),
+                fontSize: 13 * s,
+                height: 1.6,
+                letterSpacing: 0.6 * s,
               )),
-        ],
-        SizedBox(height: 10 * s),
-        if (!_failed)
-          _CenterText("首次启动需要准备运行环境，请耐心等待",
-              style: TextStyle(
-                color: const Color(0x40FFFFFF),
-                fontSize: 11 * s,
-                height: 1.5,
-              )),
-        if (_failed) ...[
-          SizedBox(height: 8 * s),
-          _ActionButton(label: "重试", primary: true, onTap: _bootstrap),
+          if (_downloading && _curName.isNotEmpty) ...[
+            SizedBox(height: 8 * s),
+            _CenterText(
+                "$_curName · ${_speed.isEmpty ? "连接中…" : _speed}",
+                style: TextStyle(
+                  color: const Color(0x80FFFFFF),
+                  fontSize: 12 * s,
+                  height: 1.5,
+                )),
+          ],
           SizedBox(height: 10 * s),
-          Wrap(
-            alignment: WrapAlignment.center,
-            spacing: 10 * s,
-            runSpacing: 8 * s,
-            children: [
-              _ActionButton(
-                  label: "查看引擎日志", primary: false, onTap: _showEngineLog),
-              _ActionButton(label: "网页版", primary: false, onTap: _switchToWeb),
-            ],
-          ),
+          if (!_failed)
+            _CenterText("首次启动需要准备运行环境，请耐心等待",
+                style: TextStyle(
+                  color: const Color(0x40FFFFFF),
+                  fontSize: 11 * s,
+                  height: 1.5,
+                )),
+          if (_failed) ...[
+            SizedBox(height: 8 * s),
+            _ActionButton(label: "重试", primary: true, onTap: _bootstrap),
+            SizedBox(height: 10 * s),
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 10 * s,
+              runSpacing: 8 * s,
+              children: [
+                _ActionButton(
+                    label: "查看引擎日志", primary: false, onTap: _showEngineLog),
+                _ActionButton(
+                    label: "网页版", primary: false, onTap: _switchToWeb),
+              ],
+            ),
+          ],
+          if (_downloading || _failed) ...[
+            SizedBox(height: 14 * s),
+            _ActionButton(label: "换源", primary: false, onTap: _showSourceSheet),
+          ],
         ],
-        if (_downloading || _failed) ...[
-          SizedBox(height: 14 * s),
-          _ActionButton(label: "换源", primary: false, onTap: _showSourceSheet),
-        ],
-      ],
+      ),
     );
 
     final logoBox = Container(
-      width: logo * 1.5,
-      height: logo * 1.5,
+      width: logoW,
+      height: logoW,
       decoration: const BoxDecoration(
         shape: BoxShape.circle,
         gradient: RadialGradient(
@@ -1141,6 +1149,25 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       ),
     );
 
+    final content = sideBySide
+        ? Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              logoBox,
+              SizedBox(width: gap),
+              texts,
+            ],
+          )
+        : Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              logoBox,
+              SizedBox(height: 18 * s),
+              texts,
+            ],
+          );
+
     return Container(
       color: const Color(0xFF03060A),
       child: Stack(
@@ -1155,21 +1182,13 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                   constraints: BoxConstraints(minHeight: c.maxHeight),
                   child: Padding(
                     padding: EdgeInsets.symmetric(
-                      horizontal: 20 * s,
+                      horizontal: pad,
                       vertical: 16 * s,
                     ),
                     child: Center(
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          logoBox,
-                          SizedBox(width: 26 * s),
-                          ConstrainedBox(
-                            constraints: BoxConstraints(maxWidth: textWidth),
-                            child: texts,
-                          ),
-                        ],
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(maxWidth: avail),
+                        child: content,
                       ),
                     ),
                   ),
