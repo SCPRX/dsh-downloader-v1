@@ -870,21 +870,25 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
           : <String, dynamic>{};
       final type = ev['type']?.toString() ?? '';
       final data = ev['data'];
-      if (type == 'assistant/chunk') {
-        final txt = _textOf(data);
-        if (txt.isNotEmpty) {
-          _chunkSeen = true;
-          setState(() => _streamText += txt);
-          _scrollToEnd();
+      if (type == 'assistant/live-chunk' || type == 'assistant/chunk') {
+        final chunk = (data is Map && data['chunk'] is Map)
+            ? (data['chunk'] as Map)
+            : (data is Map ? data : const <String, dynamic>{});
+        final ctype = chunk['type']?.toString() ?? '';
+        if (ctype == 'text-delta' || ctype.isEmpty) {
+          final txt = chunk['text']?.toString() ?? _textOf(chunk);
+          if (txt.isNotEmpty) {
+            _chunkSeen = true;
+            setState(() => _streamText += txt);
+            _scrollToEnd();
+          }
         }
       } else if (type == 'assistant/message') {
-        final txt = _textOf(data);
+        final finalText = _messageText(data);
         setState(() {
-          if (txt.isNotEmpty && !_chunkSeen) {
-            _streamText += txt;
-          }
-          if (_streamText.isNotEmpty) {
-            _msgs.add(ChatMsg(_streamText, false));
+          final out = finalText.isNotEmpty ? finalText : _streamText;
+          if (out.isNotEmpty) {
+            _msgs.add(ChatMsg(out, false));
           }
           _streamText = "";
           _chunkSeen = false;
@@ -905,9 +909,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     } else if (method == 'session.status') {
     } else if (method == 'session.query.completed') {
       final fr = params['finalResponse'];
-      final txt = fr is Map
-          ? (fr['text']?.toString() ?? _textOf(fr))
-          : (fr?.toString() ?? "");
+      final txt = _messageText(fr);
       setState(() {
         if (_streamText.isNotEmpty) {
           _msgs.add(ChatMsg(_streamText, false));
@@ -920,6 +922,28 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       });
       _scrollToEnd();
     }
+  }
+
+  String _messageText(dynamic data) {
+    if (data is Map) {
+      final msg = data['message'];
+      if (msg is Map) {
+        final content = msg['content'];
+        if (content is List) {
+          final b = StringBuffer();
+          for (final blk in content) {
+            if (blk is Map) {
+              final type = blk['type']?.toString();
+              if (type == 'text' && blk['text'] is String) {
+                b.write(blk['text']);
+              }
+            }
+          }
+          if (b.isNotEmpty) return b.toString();
+        }
+      }
+    }
+    return _textOf(data);
   }
 
   String _textOf(dynamic o) {
