@@ -23,27 +23,22 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         private const val CHANNEL = "com.dsh.dshapp/status"
-        /** 起始端口；被占用就往后找 */
         private const val BASE_PORT = 3090
-        /** 最多往后找多少个端口 */
         private const val MAX_TRIES = 20
     }
 
     private lateinit var channel: MethodChannel
 
-    /** 网页模式（dsh web）的进程 */
     @Volatile private var webServer: Process? = null
 
-    /** 原生模式（dsh --profile sdk）的进程 */
     @Volatile private var sdkProc: Process? = null
 
     @Volatile private var starting = false
     @Volatile private var engineUrl: String = ""
-    /** 实际使用的端口（自动挑的）；0 = 交给系统分配，待从日志读取 */
+
     @Volatile private var activePort: Int = BASE_PORT
     private val lastLog = ArrayDeque<String>()
 
-    /** 记住最近几行引擎输出，失败时直接显示给用户 */
     private fun remember(line: String) {
         if (line.isBlank()) return
         lastLog.addLast(line)
@@ -53,7 +48,6 @@ class MainActivity : FlutterActivity() {
     private fun lastLogText(): String = lastLog.joinToString(" ｜ ")
 
     private val envDir: File get() = File(filesDir, "dsh-env")
-    // proot 方案：Linux 版 node + harness 跑在 guest 的 Linux 根文件系统里
     private val prootBin: File get() = File(envDir, "proot")
     private val loaderBin: File get() = File(envDir, "loader")
     private val rootfsDir: File get() = File(envDir, "rootfs")
@@ -63,12 +57,9 @@ class MainActivity : FlutterActivity() {
     private val workDir: File get() = envDir
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // 必须在 super.onCreate 之前设置，让 Flutter 内容铺满整个窗口（含状态栏区域），
-        // 这样星空背景能一直画到屏幕最顶端，不会留黑边
         WindowCompat.setDecorFitsSystemWindows(window, false)
         super.onCreate(savedInstanceState)
 
-        // 允许内容铺进挖孔屏区域，否则竖屏顶部、横屏摄像头那一侧会被系统留黑边
         if (android.os.Build.VERSION.SDK_INT >= 28) {
             val attrs = window.attributes
             attrs.layoutInDisplayCutoutMode =
@@ -147,8 +138,6 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    // ---------- 引擎日志（写文件，出问题能翻） ----------
-
     private fun engineLogFile(): File = File(filesDir, "engine.log")
 
     @Synchronized
@@ -172,8 +161,6 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    // ---------- 状态回传 ----------
-
     private fun status(msg: String) {
         runOnUiThread {
             if (this::channel.isInitialized) channel.invokeMethod("updateStatus", msg)
@@ -193,9 +180,6 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    // ---------- 端口工具 ----------
-
-    /** 从 BASE_PORT 开始往后找第一个能绑上的端口；都占着就返回 0（交给系统分配） */
     private fun findFreePort(): Int {
         for (i in 0 until MAX_TRIES) {
             val port = BASE_PORT + i
@@ -207,7 +191,7 @@ class MainActivity : FlutterActivity() {
     private fun isPortFree(port: Int): Boolean = try {
         java.net.ServerSocket().use { server ->
             server.reuseAddress = true
-            server.bind(InetSocketAddress("127.0.0.1", port))
+            server.bind(java.net.InetSocketAddress("127.0.0.1", port))
         }
         true
     } catch (_: Throwable) {
@@ -221,12 +205,8 @@ class MainActivity : FlutterActivity() {
         null
     }
 
-    // ---------- 环境检查 ----------
-
     private fun isEnvReady(): Boolean =
         prootBin.exists() && loaderBin.exists() && guestNode.exists() && guestHarness.exists()
-
-    // ---------- 解压 ----------
 
     private fun extractEnv(zipFile: File) {
         Thread {
@@ -249,10 +229,8 @@ class MainActivity : FlutterActivity() {
                 var count = 0
                 val buf = ByteArray(64 * 1024)
                 val root = envDir.canonicalPath
-                // zip 里的符号链接解压后会变成小文本文件，这里先记下来，解压完再恢复
                 val linkCandidates = ArrayList<Pair<String, String>>()
-                val linkLike =
-                    Regex("^[.]{0,2}/?[A-Za-z0-9@._+/-]+$")
+                val linkLike = Regex("^[.]{0,2}/?[A-Za-z0-9@._+/-]+$")
                 ZipInputStream(FileInputStream(zipFile)).use { z ->
                     while (true) {
                         val e = z.nextEntry ?: break
@@ -292,7 +270,6 @@ class MainActivity : FlutterActivity() {
                     }
                 }
 
-                // 第二步：恢复可执行位（Java 解压会丢权限）
                 var execs = 0
                 val execList = File(envDir, "meta/exec.list")
                 if (execList.exists()) {
@@ -308,7 +285,6 @@ class MainActivity : FlutterActivity() {
                 }
                 status("解压完成，恢复 $execs 个可执行权限，正在恢复链接…")
 
-                // 第三步：恢复符号链接（rootfs 里大量链接，缺了系统命令都用不了）
                 var links = 0
                 if (android.os.Build.VERSION.SDK_INT >= 26) {
                     val linkList = File(envDir, "meta/links.txt")
@@ -332,7 +308,6 @@ class MainActivity : FlutterActivity() {
                             }
                         }
                     }
-                    // 旧版链接候选（兼容）
                     for ((path, target) in linkCandidates) {
                         try {
                             val f = File(path)
@@ -360,7 +335,6 @@ class MainActivity : FlutterActivity() {
                 zipFile.delete()
                 notifyEvent("envReady", null)
             } catch (t: Throwable) {
-                // 包坏了（常见于多源续传混了字节）：删掉，让用户重试时重新下载
                 try {
                     zipFile.delete()
                 } catch (_: Throwable) {
@@ -369,8 +343,6 @@ class MainActivity : FlutterActivity() {
             }
         }.start()
     }
-
-    // ---------- 安装 node 缺的系统库（旧方案兼容，新运行时用不到） ----------
 
     private fun installLibs(zipFile: File) {
         Thread {
@@ -413,8 +385,6 @@ class MainActivity : FlutterActivity() {
             }
         }.start()
     }
-
-    // ---------- 修复符号链接（旧方案兼容） ----------
 
     private fun repairLinks() {
         Thread {
@@ -460,8 +430,6 @@ class MainActivity : FlutterActivity() {
         }.start()
     }
 
-    // ---------- 原生模式：proot 里跑 dsh --profile sdk（stdio JSON-RPC） ----------
-
     private fun startSdk(apiKey: String) {
         if (!isEnvReady()) {
             fail("环境还没装好")
@@ -490,7 +458,6 @@ class MainActivity : FlutterActivity() {
                     .start()
                 sdkProc = p
 
-                // stdout：JSON-RPC 每一行
                 Thread {
                     try {
                         BufferedReader(InputStreamReader(p.inputStream)).use { r ->
@@ -506,7 +473,6 @@ class MainActivity : FlutterActivity() {
                     }
                 }.start()
 
-                // stderr：引擎日志
                 Thread {
                     try {
                         BufferedReader(InputStreamReader(p.errorStream)).use { r ->
@@ -552,8 +518,6 @@ class MainActivity : FlutterActivity() {
         }
         sdkProc = null
     }
-
-    // ---------- 网页兜底：proot 里跑 dsh web + 探测端口 ----------
 
     private fun startWeb() {
         if (!isEnvReady()) {
@@ -634,12 +598,10 @@ class MainActivity : FlutterActivity() {
         status("等待引擎响应...")
         val deadline = System.currentTimeMillis() + 180_000
         while (System.currentTimeMillis() < deadline) {
-            // 端口交给系统分配时，先从引擎日志里把端口读出来
             if (activePort == 0 && engineUrl.isNotEmpty()) {
                 portFromUrl(engineUrl)?.let { activePort = it }
             }
             if (activePort != 0 && portOpen(activePort)) {
-                // 端口通了，最多再等 3 秒拿带 token 的完整地址
                 val readyAt = System.currentTimeMillis()
                 while (engineUrl.isEmpty() &&
                     System.currentTimeMillis() - readyAt < 3000
@@ -685,8 +647,6 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    // ---------- 下载/解压时的前台服务 ----------
-
     private fun startKeepAlive() {
         try {
             val intent = Intent(this, DownloadService::class.java)
@@ -707,10 +667,6 @@ class MainActivity : FlutterActivity() {
     }
 }
 
-/**
- * 下载/解压/运行期间的前台服务：挂一个通知，让系统把进程当成「正在干活」，
- * 切到后台或锁屏时不会被当缓存进程杀掉。
- */
 class DownloadService : android.app.Service() {
     companion object {
         @Volatile var currentText: String = "正在准备环境，请勿清理后台…"
@@ -724,7 +680,6 @@ class DownloadService : android.app.Service() {
         val title = "落锤"
         val text = currentText
         val icon = android.R.drawable.stat_sys_download
-        // 点通知回到 App
         val pi = android.app.PendingIntent.getActivity(
             this,
             0,
@@ -760,7 +715,6 @@ class DownloadService : android.app.Service() {
                 .build()
             startForeground(1001, n)
         }
-        // 屏幕熄灭时保持 CPU 不睡（服务销毁时释放）
         try {
             val pm = getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
             wakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "dsh:download")
