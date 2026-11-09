@@ -254,6 +254,20 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       });
       return;
     }
+    final bool alive = await _ch.invokeMethod<bool>('engineAlive') ?? false;
+    if (alive) {
+      _rpcReady = true;
+      if (_sessionId.isEmpty) {
+        _sessionId = 's${DateTime.now().millisecondsSinceEpoch}';
+      }
+      _startKeepAliveLoop(text: "落锤 运行中 · 可切到后台");
+      setState(() {
+        _phase = "chat";
+        _failed = false;
+        _status = "";
+      });
+      return;
+    }
     await _startEngine();
   }
 
@@ -1000,11 +1014,11 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
 
   Widget _buildSplash() {
     final size = MediaQuery.sizeOf(context);
-    final landscape = size.width > size.height;
     final short = math.min(size.width, size.height);
     final s = (short / 400).clamp(0.85, 1.5);
-    final logo = (short * 0.24).clamp(80.0, 130.0);
+    final logo = (short * 0.22).clamp(72.0, 118.0);
     final showBar = _progress > 0 || _downloading;
+    final textWidth = size.width * (size.width > size.height ? 0.46 : 0.54);
 
     final texts = Column(
       mainAxisSize: MainAxisSize.min,
@@ -1025,10 +1039,10 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
               height: 1.4,
               letterSpacing: 1 * s,
             )),
-        SizedBox(height: (landscape ? 20 : 34) * s),
+        SizedBox(height: 26 * s),
         if (showBar) ...[
           SizedBox(
-            width: math.min(260.0 * s, size.width * (landscape ? 0.36 : 0.7)),
+            width: math.min(240.0 * s, textWidth),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(8),
               child: LinearProgressIndicator(
@@ -1039,7 +1053,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
               ),
             ),
           ),
-          SizedBox(height: 16 * s),
+          SizedBox(height: 14 * s),
         ],
         _CenterText(_status,
             style: TextStyle(
@@ -1082,7 +1096,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
           ),
         ],
         if (_downloading || _failed) ...[
-          SizedBox(height: 16 * s),
+          SizedBox(height: 14 * s),
           _ActionButton(label: "换源", primary: false, onTap: _showSourceSheet),
         ],
       ],
@@ -1141,36 +1155,22 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                   constraints: BoxConstraints(minHeight: c.maxHeight),
                   child: Padding(
                     padding: EdgeInsets.symmetric(
-                      horizontal: 24 * s,
-                      vertical: landscape ? 10 * s : 24 * s,
+                      horizontal: 20 * s,
+                      vertical: 16 * s,
                     ),
                     child: Center(
-                      child: landscape
-                          ? Row(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.center,
-                              children: [
-                                logoBox,
-                                SizedBox(width: 28 * s),
-                                ConstrainedBox(
-                                  constraints: BoxConstraints(
-                                      maxWidth: size.width * 0.48),
-                                  child: texts,
-                                ),
-                              ],
-                            )
-                          : Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                logoBox,
-                                SizedBox(height: 18 * s),
-                                ConstrainedBox(
-                                  constraints: BoxConstraints(
-                                      maxWidth: size.width * 0.88),
-                                  child: texts,
-                                ),
-                              ],
-                            ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          logoBox,
+                          SizedBox(width: 26 * s),
+                          ConstrainedBox(
+                            constraints: BoxConstraints(maxWidth: textWidth),
+                            child: texts,
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
