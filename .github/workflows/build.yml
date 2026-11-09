@@ -19,19 +19,13 @@ jobs:
         mkdir -p build_app/assets
         cp logo.png build_app/assets/logo.png
         cd build_app
-        # 桌面图标：把 logo 放到深色底上（和启动页观感一致），再切各尺寸
-        if command -v convert >/dev/null 2>&1; then
-          convert -size 1024x1024 xc:'#03060A' \
-            \( assets/logo.png -resize 640x640 \) -gravity center -composite \
-            -alpha off /tmp/icon_master.png
+        if [ -f ../icon.png ] && command -v convert >/dev/null 2>&1; then
           for spec in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
             d=${spec%%:*}; sz=${spec##*:}
             mkdir -p android/app/src/main/res/mipmap-$d
-            convert /tmp/icon_master.png -resize ${sz}x${sz} android/app/src/main/res/mipmap-$d/ic_launcher.png
+            convert ../icon.png -resize ${sz}x${sz} android/app/src/main/res/mipmap-$d/ic_launcher.png
           done
         fi
-        # 不再覆盖 Flutter 生成的 AndroidManifest（覆盖会丢 flutterEmbedding 和启动 Activity，
-        # 直接报 "deleted Android v1 embedding"）。改成只往里补前台服务和权限。
         python3 - <<'PY'
         import re
         p = "android/app/src/main/AndroidManifest.xml"
@@ -55,7 +49,7 @@ jobs:
         PY
         python3 -c "import xml.dom.minidom; xml.dom.minidom.parse('android/app/src/main/AndroidManifest.xml'); print('manifest ok')"
         sed -i -E 's/targetSdk *= *flutter\.targetSdkVersion/targetSdk = 28/' android/app/build.gradle.kts
-        grep -q "targetSdk = 28" android/app/build.gradle.kts || { echo "targetSdk 补丁没生效"; exit 1; }
+        grep -q "targetSdk = 28" android/app/build.gradle.kts || { echo "targetSdk patch failed"; exit 1; }
         printf '\nandroid {\n    lint {\n        abortOnError = false\n        checkReleaseBuilds = false\n    }\n}\n' >> android/app/build.gradle.kts
         flutter pub get
         flutter build apk --release --target-platform android-arm64
