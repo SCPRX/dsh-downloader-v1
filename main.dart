@@ -33,10 +33,8 @@ class MyApp extends StatelessWidget {
   }
 }
 
-/// 用户手动换源时用来打断正在进行的下载
 class _SwitchRequested implements Exception {}
 
-/// 一条聊天消息
 class ChatMsg {
   final String text;
   final bool mine;
@@ -52,23 +50,19 @@ class AppRoot extends StatefulWidget {
 class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   static const MethodChannel _ch = MethodChannel('com.dsh.dshapp/status');
 
-  // ---------- 阶段 ----------
-  // env：下载/解压环境；setup：填 API Key；starting：起引擎；chat：原生聊天；web：网页兜底
   String _phase = 'env';
 
-  // ---------- 通用状态 ----------
   String _status = "正在检查环境...";
   bool _failed = false;
   double _progress = 0.0;
 
-  // ---------- 下载 ----------
   static const List<String> _envUrls = [
     'https://ghfast.top/https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/apk.zip',
     'https://gh-proxy.com/https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/apk.zip',
     'https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/apk.zip',
   ];
   static const List<String> _envNames = ['高速镜像', '极速镜像', '官方源'];
-  /// 环境包的标准大小，用于判断源上是不是旧文件 / 下载是否完整
+
   static const int _envSize = 207615322;
   int? _pinnedSrc;
   int _runId = 0;
@@ -94,7 +88,6 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   String _testResult = "";
   String _engineLog = "";
 
-  // ---------- 设置 ----------
   String _apiKey = "";
   String _model = "deepseek-flash";
   String _appDir = "";
@@ -102,13 +95,11 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   final TextEditingController _modelCtrl =
       TextEditingController(text: "deepseek-flash");
 
-  // ---------- JSON-RPC ----------
   int _rpcId = 0;
   final Map<int, Completer<Map<String, dynamic>?>> _pending = {};
   String _sessionId = "";
   bool _rpcReady = false;
 
-  // ---------- 聊天 ----------
   final List<ChatMsg> _msgs = [];
   String _streamText = "";
   bool _sending = false;
@@ -116,11 +107,9 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   final TextEditingController _inputCtrl = TextEditingController();
   final ScrollController _scrollCtrl = ScrollController();
 
-  // ---------- 网页兜底 ----------
   WebViewController? _web;
   String _engineUrl = "http://127.0.0.1:3090";
 
-  // ---------- 背景 ----------
   late AnimationController _bgController;
   final math.Random _random = math.Random();
   List<StarParticle> _stars = [];
@@ -177,7 +166,6 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
           _openWeb(url);
           break;
         case 'log':
-          // 引擎底层日志，忽略即可
           break;
       }
     });
@@ -229,8 +217,6 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     super.dispose();
   }
 
-  // ---------------- 启动 ----------------
-
   Future<void> _bootstrap() async {
     try {
       _appDir = (await _ch.invokeMethod<String>('filesDirPath')) ?? "";
@@ -271,10 +257,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     await _startEngine();
   }
 
-  // ---------------- 运行库（旧方案兼容） ----------------
-
   Future<void> _ensureLibs() async {
-    // 新运行时（proot + Linux 版 node/harness）自带全部库，别再补
     final guestNode = File("$_appDir/dsh-env/rootfs/opt/node/bin/node");
     if (await guestNode.exists()) return;
 
@@ -308,7 +291,6 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     }
   }
 
-  /// 让原生层把符号链接修好（旧方案兼容）
   Future<void> _repairLinks() async {
     _linksDone = Completer<void>();
     await _ch.invokeMethod('repairLinks');
@@ -316,8 +298,6 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       await _linksDone!.future.timeout(const Duration(minutes: 5));
     } catch (_) {}
   }
-
-  // ---------------- 设置读写 ----------------
 
   File get _settingsFile => File("$_appDir/native_chat_settings.json");
 
@@ -342,8 +322,6 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     } catch (_) {}
   }
 
-  // ---------------- 下载环境（多源 + 断点续传） ----------------
-
   Future<void> _downloadEnv() async {
     final String? zipPath = await _ch.invokeMethod<String>('envZipPath');
     if (zipPath == null || zipPath.isEmpty) throw '拿不到安装包路径';
@@ -353,7 +331,6 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
         await _download(zipPath);
         break;
       } on _SwitchRequested {
-        // 用户点了换源：带着新设置重新开始
         continue;
       }
     }
@@ -362,7 +339,6 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       _progress = 1.0;
       _status = "下载完成，正在解压(耗时较长)...";
     });
-    // 前台服务继续挂着：解压、启动引擎都需要保活
     await _ch.invokeMethod('startExtract', {'path': zipPath});
   }
 
@@ -381,7 +357,6 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
 
     int start = await part.exists() ? await part.length() : 0;
     if (start >= _envSize) {
-      // 已经是完整大小但上次解压失败：说明是坏包，删掉重下
       await part.delete();
       start = 0;
     }
@@ -424,8 +399,8 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
           _srcInfo[i] = "$e";
           final next = order.indexOf(i) + 1;
           if (next < order.length && mounted) {
-            setState(() =>
-                _status = "${_envNames[i]} 不行，换 ${_envNames[order[next]]}...");
+            setState(() => _status =
+                "${_envNames[i]} 不行，换 ${_envNames[order[next]]}...");
           }
         }
       }
@@ -592,8 +567,6 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     }
   }
 
-  // ---------------- 手动换源 ----------------
-
   void _autoRetest() {
     _pinnedSrc = null;
     _srcBps.clear();
@@ -630,7 +603,6 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     );
   }
 
-  /// 换源面板的内容；由 _SourceSheet 定时重绘，测速结果能实时刷新
   Widget buildSourceSheetContent(BuildContext ctx) {
     return SafeArea(
       child: SingleChildScrollView(
@@ -692,8 +664,6 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     );
   }
 
-  // ---------------- 前台服务（全程保活） ----------------
-
   Future<void> _keepAlive(bool on) async {
     try {
       await _ch.invokeMethod('keepAlive', {
@@ -717,8 +687,6 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     _keepAliveTimer = null;
   }
 
-  // ---------------- 原生引擎（proot 里跑 dsh --profile sdk） ----------------
-
   Future<void> _startEngine() async {
     setState(() {
       _phase = "starting";
@@ -726,7 +694,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       _status = "正在启动引擎…";
     });
     _startKeepAliveLoop(text: "引擎启动中，请稍候…");
-    // 引擎首次启动要加载很多模块，可能比较久，这里显示已等待秒数
+
     var secs = 0;
     _startupTimer?.cancel();
     _startupTimer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -741,7 +709,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
         'apiKey': _apiKey,
         'model': _model,
       });
-      // stdin 会先缓冲，引擎读完自然会回 initialize；手机 CPU 慢，给足时间
+
       final res = await _rpc('initialize', {
         'cwd': _appDir,
         'provider': 'deepseek-official',
@@ -751,7 +719,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       if (res == null) throw '引擎没有响应';
       _rpcReady = true;
       _startupTimer?.cancel();
-      // 引擎跑起来了：通知改成「运行中」，前台服务继续养着
+
       _startKeepAliveLoop(text: "落锤 运行中 · 可切到后台");
       setState(() {
         _phase = "chat";
@@ -770,7 +738,6 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     }
   }
 
-  /// 取引擎日志（失败排查用）
   Future<void> _showEngineLog() async {
     String log = "";
     try {
@@ -908,11 +875,9 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
         _scrollToEnd();
       }
     } else if (method == 'session.status') {
-      // 可以在这里显示"思考中"等状态，先不处理
     }
   }
 
-  /// 从引擎事件里尽量抽出文字（兼容 chunk / message 两种结构）
   String _textOf(dynamic o) {
     if (o is String) return "";
     if (o is List) {
@@ -977,8 +942,6 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     });
   }
 
-  // ---------------- 网页兜底 ----------------
-
   Future<void> _switchToWeb() async {
     setState(() {
       _status = "正在启动网页版...";
@@ -1019,8 +982,6 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     unawaited(_startEngine());
   }
 
-  // ---------------- UI ----------------
-
   @override
   Widget build(BuildContext context) {
     final web = _web;
@@ -1058,7 +1019,6 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                       mainAxisSize: MainAxisSize.min,
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        // logo + 柔光
                         Container(
                           width: logo * 1.5,
                           height: logo * 1.5,
@@ -1375,7 +1335,6 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     );
   }
 
-  /// 直接打 DeepSeek 的模型列表接口，验证 Key 是否有效
   Future<void> _testKey() async {
     final key = _keyCtrl.text.trim();
     if (key.isEmpty) {
@@ -1530,7 +1489,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                   children: [
                     _webButton(Icons.refresh, () => web.reload()),
                     const SizedBox(width: 8),
-                    _webButton(Icons.open_in_browser, () async {
+                    _webButton(Icons.arrow_back, () async {
                       try {
                         await _ch.invokeMethod('openEngine', {'url': _engineUrl});
                       } catch (_) {}
@@ -1561,7 +1520,6 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   }
 }
 
-/// 换源面板：自己定时重绘，这样测速结果能边测边显示
 class _SourceSheet extends StatefulWidget {
   final _AppRootState host;
   const _SourceSheet(this.host);
@@ -1592,7 +1550,6 @@ class _SourceSheetState extends State<_SourceSheet> {
       widget.host.buildSourceSheetContent(context);
 }
 
-/// 左对齐的自绘文字（避免系统给 Text 画下划线）
 class _LeftText extends StatelessWidget {
   final String text;
   final TextStyle style;
@@ -1612,7 +1569,6 @@ class _LeftText extends StatelessWidget {
   }
 }
 
-/// 统一样式的按钮：主按钮青色实心，次按钮描边
 class _ActionButton extends StatelessWidget {
   final String label;
   final bool primary;
@@ -1664,7 +1620,6 @@ class _ActionButton extends StatelessWidget {
   }
 }
 
-/// 状态胶囊（备用，当前未使用）
 class _StatusBadge extends StatelessWidget {
   final String text;
   const _StatusBadge(this.text);
@@ -1678,6 +1633,9 @@ class _StatusBadge extends StatelessWidget {
         color: const Color(0x99101A24),
         borderRadius: BorderRadius.circular(24),
         border: Border.all(color: const Color(0x3300FFCC), width: 1),
+        boxShadow: const [
+          BoxShadow(color: Color(0x1A00FFCC), blurRadius: 22, spreadRadius: 1),
+        ],
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -1709,7 +1667,6 @@ class _StatusBadge extends StatelessWidget {
   }
 }
 
-/// 不用 Text 组件画状态文字，避免系统乱画下划线
 class _CenterText extends StatelessWidget {
   final String text;
   final TextStyle style;
