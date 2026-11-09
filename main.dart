@@ -256,17 +256,28 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     }
     final bool alive = await _ch.invokeMethod<bool>('engineAlive') ?? false;
     if (alive) {
-      _rpcReady = true;
       if (_sessionId.isEmpty) {
         _sessionId = 's${DateTime.now().millisecondsSinceEpoch}';
       }
-      _startKeepAliveLoop(text: "落锤 运行中 · 可切到后台");
-      setState(() {
-        _phase = "chat";
-        _failed = false;
-        _status = "";
-      });
-      return;
+      bool ok = false;
+      try {
+        await _rpc('session/working-directory/get', {'sessionId': _sessionId},
+            timeout: const Duration(seconds: 8));
+        ok = true;
+      } catch (_) {}
+      if (ok) {
+        _rpcReady = true;
+        _startKeepAliveLoop(text: "落锤 运行中 · 可切到后台");
+        setState(() {
+          _phase = "chat";
+          _failed = false;
+          _status = "";
+        });
+        return;
+      }
+      try {
+        await _ch.invokeMethod('killEngine');
+      } catch (_) {}
     }
     await _startEngine();
   }
@@ -890,6 +901,22 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
         _scrollToEnd();
       }
     } else if (method == 'session.status') {
+    } else if (method == 'session.query.completed') {
+      final fr = params['finalResponse'];
+      final txt = fr is Map
+          ? (fr['text']?.toString() ?? _textOf(fr))
+          : (fr?.toString() ?? "");
+      setState(() {
+        if (_streamText.isNotEmpty) {
+          _msgs.add(ChatMsg(_streamText, false));
+          _streamText = "";
+        } else if (txt.isNotEmpty) {
+          _msgs.add(ChatMsg(txt, false));
+        }
+        _sending = false;
+        _chunkSeen = false;
+      });
+      _scrollToEnd();
     }
   }
 
@@ -1406,20 +1433,24 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   }
 
   Widget _buildChat() {
+    const none = TextDecoration.none;
     return Container(
       color: const Color(0xFF03060A),
       child: SafeArea(
         child: Column(
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
+              padding: const EdgeInsets.fromLTRB(18, 10, 8, 6),
               child: Row(
                 children: [
                   const Text("落锤",
                       style: TextStyle(
                           color: Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold)),
+                          fontSize: 17,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 1,
+                          decoration: none,
+                          decorationColor: Colors.transparent)),
                   const Spacer(),
                   IconButton(
                     tooltip: "网页版",
@@ -1433,29 +1464,39 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
             Expanded(
               child: ListView.builder(
                 controller: _scrollCtrl,
-                padding: const EdgeInsets.symmetric(horizontal: 16),
+                padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
                 itemCount: _msgs.length + (_streamText.isNotEmpty ? 1 : 0),
                 itemBuilder: (ctx, i) {
                   final isStream = i == _msgs.length;
                   final text = isStream ? _streamText : _msgs[i].text;
                   final mine = isStream ? false : _msgs[i].mine;
-                  return Align(
-                    alignment:
-                        mine ? Alignment.centerRight : Alignment.centerLeft,
-                    child: Container(
-                      margin: const EdgeInsets.symmetric(vertical: 4),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 8),
-                      constraints: const BoxConstraints(maxWidth: 560),
-                      decoration: BoxDecoration(
-                        color: mine
-                            ? const Color(0xFF14524A)
-                            : const Color(0xFF141A22),
-                        borderRadius: BorderRadius.circular(12),
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 5),
+                    child: Align(
+                      alignment: mine
+                          ? Alignment.centerRight
+                          : Alignment.centerLeft,
+                      child: Container(
+                        constraints: BoxConstraints(
+                          maxWidth: MediaQuery.sizeOf(context).width * 0.82,
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: mine
+                              ? const Color(0xFF14524A)
+                              : const Color(0xFF141A22),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Text(text,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 15,
+                              height: 1.5,
+                              decoration: none,
+                              decorationColor: Colors.transparent,
+                            )),
                       ),
-                      child: Text(text,
-                          style: const TextStyle(
-                              color: Colors.white, fontSize: 14, height: 1.4)),
                     ),
                   );
                 },
@@ -1463,7 +1504,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
             ),
             if (_sending)
               const Padding(
-                padding: EdgeInsets.only(bottom: 4),
+                padding: EdgeInsets.only(bottom: 6),
                 child: SizedBox(
                     width: 14,
                     height: 14,
@@ -1477,20 +1518,28 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                   Expanded(
                     child: TextField(
                       controller: _inputCtrl,
-                      style: const TextStyle(color: Colors.white),
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          decoration: none,
+                          decorationColor: Colors.transparent),
                       minLines: 1,
                       maxLines: 4,
                       onSubmitted: (_) => _send(),
                       decoration: InputDecoration(
                         hintText: "说点什么…",
-                        hintStyle: const TextStyle(color: Colors.white38),
+                        hintStyle: const TextStyle(
+                            color: Colors.white38,
+                            fontSize: 15,
+                            decoration: none,
+                            decorationColor: Colors.transparent),
                         filled: true,
                         fillColor: Colors.white10,
                         border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(20),
+                            borderRadius: BorderRadius.circular(22),
                             borderSide: BorderSide.none),
                         contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 12),
+                            horizontal: 18, vertical: 14),
                       ),
                     ),
                   ),
@@ -1498,6 +1547,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                   IconButton(
                     onPressed: _sending ? null : _send,
                     icon: Icon(Icons.send,
+                        size: 26,
                         color: _sending
                             ? Colors.white24
                             : const Color(0xFF00FFCC)),
