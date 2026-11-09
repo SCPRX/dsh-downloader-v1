@@ -446,6 +446,8 @@ class MainActivity : FlutterActivity() {
                     "export PROOT_LOADER='${envDir.absolutePath}/loader' && " +
                     "export PROOT_LOADER_32='${envDir.absolutePath}/loader32' && " +
                     "export PROOT_NO_SECCOMP=1 && " +
+                    "mkdir -p '${filesDir.absolutePath}/proot-tmp' && " +
+                    "export PROOT_TMP_DIR='${filesDir.absolutePath}/proot-tmp' && " +
                     "exec '${prootBin.absolutePath}' -0 -r '${rootfsDir.absolutePath}' " +
                     "-b /dev -b /proc -b /sys -w /root " +
                     "/usr/bin/env HOME=/root DSH_HOME=/root/.dsh " +
@@ -542,6 +544,8 @@ class MainActivity : FlutterActivity() {
                     "export PROOT_LOADER='${envDir.absolutePath}/loader' && " +
                     "export PROOT_LOADER_32='${envDir.absolutePath}/loader32' && " +
                     "export PROOT_NO_SECCOMP=1 && " +
+                    "mkdir -p '${filesDir.absolutePath}/proot-tmp' && " +
+                    "export PROOT_TMP_DIR='${filesDir.absolutePath}/proot-tmp' && " +
                     "exec '${prootBin.absolutePath}' -0 -r '${rootfsDir.absolutePath}' " +
                     "-b /dev -b /proc -b /sys -w /root " +
                     "/usr/bin/env HOME=/root DSH_HOME=/root/.dsh " +
