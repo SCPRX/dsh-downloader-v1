@@ -752,7 +752,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       _rpcReady = true;
       _startupTimer?.cancel();
       // 引擎跑起来了：通知改成「运行中」，前台服务继续养着
-      _startKeepAliveLoop(text: "原生 DSH 运行中 · 可切到后台");
+      _startKeepAliveLoop(text: "落锤 运行中 · 可切到后台");
       setState(() {
         _phase = "chat";
         _failed = false;
@@ -1098,7 +1098,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                           ),
                         ),
                         const SizedBox(height: 30),
-                        _CenterText("原生 DSH",
+                        _CenterText("落锤",
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 20,
@@ -1417,7 +1417,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
               padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
               child: Row(
                 children: [
-                  const Text("原生 DSH",
+                  const Text("落锤",
                       style: TextStyle(
                           color: Colors.white,
                           fontSize: 16,
