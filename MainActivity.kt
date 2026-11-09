@@ -495,7 +495,7 @@ class MainActivity : FlutterActivity() {
                     .redirectErrorStream(false)
                     .start()
                 sdkProc = p
-                logEngine("[start] pid=" + p.pid())
+                logEngine("[start] process launched")
 
                 Thread {
                     try {
