@@ -1,815 +1,1902 @@
-package com.dsh.dshapp
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:math' as math;
 
-import android.content.Intent
-import android.net.Uri
-import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
-import android.os.StatFs
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
-import io.flutter.embedding.android.FlutterActivity
-import io.flutter.embedding.engine.FlutterEngine
-import io.flutter.plugin.common.MethodChannel
-import java.io.BufferedReader
-import java.io.File
-import java.io.FileInputStream
-import java.io.FileOutputStream
-import java.io.InputStreamReader
-import java.net.InetSocketAddress
-import java.net.Socket
-import java.util.zip.ZipInputStream
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
+import 'package:webview_flutter/webview_flutter.dart';
 
-class MainActivity : FlutterActivity() {
-
-    companion object {
-        private const val CHANNEL = "com.dsh.dshapp/status"
-        private const val BASE_PORT = 3090
-        private const val MAX_TRIES = 20
-
-        @Volatile var channel: MethodChannel? = null
-        @Volatile var webServer: Process? = null
-        @Volatile var sdkProc: Process? = null
-        @Volatile var sdkReaderRunning = false
-        @Volatile var starting = false
-        @Volatile var engineReady = false
-        @Volatile var engineUrl = ""
-        @Volatile var activePort = BASE_PORT
-        val lastLog = ArrayDeque<String>()
-        val pendingRpc = ArrayList<String>()
-        private val mainHandler = Handler(Looper.getMainLooper())
-    }
-
-    private fun remember(line: String) {
-        if (line.isBlank()) return
-        synchronized(lastLog) {
-            lastLog.addLast(line)
-            while (lastLog.size > 8) lastLog.removeFirst()
-        }
-    }
-
-    private fun lastLogText(): String = synchronized(lastLog) { lastLog.joinToString(" ｜ ") }
-
-    private val envDir: File get() = File(filesDir, "dsh-env")
-    private val prootBin: File get() = File(envDir, "proot")
-    private val loaderBin: File get() = File(envDir, "loader")
-    private val rootfsDir: File get() = File(envDir, "rootfs")
-    private val guestNode: File get() = File(rootfsDir, "opt/node/bin/node")
-    private val guestHarness: File
-        get() = File(rootfsDir, "opt/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js")
-    private val workDir: File get() = envDir
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        WindowCompat.setDecorFitsSystemWindows(window, false)
-        super.onCreate(savedInstanceState)
-
-        if (android.os.Build.VERSION.SDK_INT >= 28) {
-            val attrs = window.attributes
-            attrs.layoutInDisplayCutoutMode =
-                android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-            window.attributes = attrs
-        }
-
-        window.statusBarColor = android.graphics.Color.TRANSPARENT
-        window.navigationBarColor = android.graphics.Color.TRANSPARENT
-        window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(0xFF03060A.toInt()))
-        val controller = WindowInsetsControllerCompat(window, window.decorView)
-        controller.hide(WindowInsetsCompat.Type.systemBars())
-        controller.systemBarsBehavior =
-            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-    }
-
-    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
-        super.configureFlutterEngine(flutterEngine)
-        val ch = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
-        channel = ch
-        ch.setMethodCallHandler { call, result ->
-            when (call.method) {
-                "checkEnv" -> result.success(isEnvReady())
-                "envZipPath" -> result.success(File(cacheDir, "env_data.zip").absolutePath)
-                "filesDirPath" -> result.success(filesDir.absolutePath)
-                "startExtract" -> {
-                    val path = call.argument<String>("path")
-                    if (path.isNullOrBlank()) {
-                        result.error("BAD_PATH", "path is empty", null)
-                    } else {
-                        extractEnv(File(path))
-                        result.success(true)
-                    }
-                }
-                "installLibs" -> {
-                    val libsPath = call.argument<String>("path")
-                    if (libsPath.isNullOrBlank()) {
-                        result.error("BAD_PATH", "path is empty", null)
-                    } else {
-                        installLibs(File(libsPath))
-                        result.success(true)
-                    }
-                }
-                "repairLinks" -> {
-                    repairLinks()
-                    result.success(true)
-                }
-                "readEngineLog" -> result.success(readEngineLog())
-                "startSdk" -> {
-                    val apiKey = call.argument<String>("apiKey") ?: ""
-                    startSdk(apiKey)
-                    result.success(true)
-                }
-                "rpcSend" -> {
-                    val line = call.argument<String>("line") ?: ""
-                    rpcSend(line)
-                    result.success(true)
-                }
-                "startWeb" -> {
-                    startWeb()
-                    result.success(true)
-                }
-                "engineAlive" -> result.success(sdkProc?.isAlive == true && sdkReaderRunning)
-                "setEngineReady" -> {
-                    engineReady = call.argument<Boolean>("ready") ?: true
-                    result.success(true)
-                }
-                "engineReady" -> result.success(engineReady)
-                "killEngine" -> {
-                    killSdk()
-                    result.success(true)
-                }
-                "openEngine" -> {
-                    val url = call.argument<String>("url") ?: "http://127.0.0.1:$activePort"
-                    openEngine(url)
-                    result.success(true)
-                }
-                "keepAlive" -> {
-                    val on = call.argument<Boolean>("on") ?: false
-                    val text = call.argument<String>("text")
-                    if (text != null) DownloadService.currentText = text
-                    if (on) startKeepAlive() else stopKeepAlive()
-                    result.success(true)
-                }
-                else -> result.notImplemented()
-            }
-        }
-    }
-
-    override fun onDestroy() {
-        if (channel === MainActivity.channel) {
-            channel = null
-        }
-        super.onDestroy()
-    }
-
-    private fun engineLogFile(): File = File(filesDir, "engine.log")
-
-    @Synchronized
-    private fun logEngine(line: String) {
-        try {
-            val f = engineLogFile()
-            if (f.length() > 2 * 1024 * 1024) f.delete()
-            f.appendText(line + "\n")
-        } catch (_: Throwable) {
-        }
-    }
-
-    private fun readEngineLog(): String {
-        return try {
-            val f = engineLogFile()
-            if (!f.exists()) return "(还没有日志)"
-            val text = f.readText()
-            if (text.length <= 12000) text else text.substring(text.length - 12000)
-        } catch (t: Throwable) {
-            "读取日志失败: ${t.message}"
-        }
-    }
-
-    private fun status(msg: String) {
-        val ch = channel ?: return
-        mainHandler.post {
-            try {
-                ch.invokeMethod("updateStatus", msg)
-            } catch (_: Throwable) {
-            }
-        }
-    }
-
-    private fun fail(msg: String) {
-        status(msg)
-        val ch = channel ?: return
-        mainHandler.post {
-            try {
-                ch.invokeMethod("failed", msg)
-            } catch (_: Throwable) {
-            }
-        }
-    }
-
-    private fun notifyEvent(method: String, arg: Any?) {
-        val ch = channel ?: return
-        mainHandler.post {
-            try {
-                ch.invokeMethod(method, arg)
-            } catch (_: Throwable) {
-            }
-        }
-    }
-
-    private fun findFreePort(): Int {
-        for (i in 0 until MAX_TRIES) {
-            val port = BASE_PORT + i
-            if (isPortFree(port)) return port
-        }
-        return 0
-    }
-
-    private fun isPortFree(port: Int): Boolean = try {
-        java.net.ServerSocket().use { server ->
-            server.reuseAddress = true
-            server.bind(java.net.InetSocketAddress("127.0.0.1", port))
-        }
-        true
-    } catch (_: Throwable) {
-        false
-    }
-
-    private fun portFromUrl(url: String): Int? = try {
-        val p = Uri.parse(url).port
-        if (p > 0) p else null
-    } catch (_: Throwable) {
-        null
-    }
-
-    private fun isEnvReady(): Boolean =
-        prootBin.exists() && loaderBin.exists() && guestNode.exists() && guestHarness.exists()
-
-    private fun extractEnv(zipFile: File) {
-        Thread {
-            try {
-                if (!zipFile.exists()) {
-                    fail("找不到下载好的环境包")
-                    return@Thread
-                }
-                val need = zipFile.length() * 2 + 200L * 1024 * 1024
-                val usable = StatFs(filesDir.absolutePath).availableBytes
-                if (usable < need) {
-                    fail("存储空间不足：解压大约还需要 ${need / 1024 / 1024} MB")
-                    return@Thread
-                }
-
-                if (envDir.exists()) envDir.deleteRecursively()
-                envDir.mkdirs()
-
-                status("正在解压环境(耗时较长)...")
-                var count = 0
-                val buf = ByteArray(64 * 1024)
-                val root = envDir.canonicalPath
-                val linkCandidates = ArrayList<Pair<String, String>>()
-                val linkLike = Regex("^[.]{0,2}/?[A-Za-z0-9@._+/-]+$")
-                ZipInputStream(FileInputStream(zipFile)).use { z ->
-                    while (true) {
-                        val e = z.nextEntry ?: break
-                        val f = File(envDir, e.name)
-                        if (!f.canonicalPath.startsWith(root + File.separator)) {
-                            status("跳过非法路径: ${e.name}")
-                            continue
-                        }
-                        if (e.isDirectory) {
-                            f.mkdirs()
-                        } else {
-                            f.parentFile?.mkdirs()
-                            FileOutputStream(f).use { o ->
-                                var n = z.read(buf)
-                                while (n > 0) {
-                                    o.write(buf, 0, n)
-                                    n = z.read(buf)
-                                }
-                            }
-                            f.setExecutable(true, false)
-                            if (e.size in 1L..300L) {
-                                try {
-                                    val content = f.readText().trim()
-                                    if (content.isNotEmpty() &&
-                                        content.length <= 300 &&
-                                        !content.contains('\n') &&
-                                        linkLike.matches(content)
-                                    ) {
-                                        linkCandidates.add(f.absolutePath to content)
-                                    }
-                                } catch (_: Throwable) {
-                                }
-                            }
-                            count++
-                            if (count % 500 == 0) status("正在解压环境… 已解压 $count 个文件")
-                        }
-                    }
-                }
-
-                var execs = 0
-                val execList = File(envDir, "meta/exec.list")
-                if (execList.exists()) {
-                    execList.forEachLine { rel ->
-                        if (rel.isNotBlank()) {
-                            try {
-                                File(envDir, rel).setExecutable(true, false)
-                                execs++
-                            } catch (_: Throwable) {
-                            }
-                        }
-                    }
-                }
-                status("解压完成，恢复 $execs 个可执行权限，正在恢复链接…")
-
-                var links = 0
-                if (android.os.Build.VERSION.SDK_INT >= 26) {
-                    val linkList = File(envDir, "meta/links.txt")
-                    if (linkList.exists()) {
-                        linkList.forEachLine { line ->
-                            val tab = line.indexOf('\t')
-                            if (tab > 0) {
-                                val rel = line.substring(0, tab)
-                                val target = line.substring(tab + 1)
-                                try {
-                                    val f = File(envDir, rel)
-                                    if (f.exists()) f.delete()
-                                    f.parentFile?.mkdirs()
-                                    java.nio.file.Files.createSymbolicLink(
-                                        f.toPath(),
-                                        java.nio.file.Paths.get(target)
-                                    )
-                                    links++
-                                } catch (_: Throwable) {
-                                }
-                            }
-                        }
-                    }
-                    for ((path, target) in linkCandidates) {
-                        try {
-                            val f = File(path)
-                            if (f.exists()) continue
-                            val t = File(f.parentFile, target)
-                            if (!t.exists()) continue
-                            java.nio.file.Files.createSymbolicLink(
-                                f.toPath(),
-                                java.nio.file.Paths.get(target)
-                            )
-                            links++
-                        } catch (_: Throwable) {
-                        }
-                    }
-                }
-                prootBin.setExecutable(true, false)
-                loaderBin.setExecutable(true, false)
-                File(envDir, "loader32").setExecutable(true, false)
-
-                if (!isEnvReady()) {
-                    fail("解压完成但找不到 proot / node / 引擎入口")
-                    return@Thread
-                }
-                status("解压完成，共 $count 个文件，恢复 $links 个链接")
-                logEngine("[env] extract done, $count files, $links links")
-                zipFile.delete()
-                notifyEvent("envReady", null)
-            } catch (t: Throwable) {
-                logEngine("[err] extract fail: " + t.message)
-                try {
-                    zipFile.delete()
-                } catch (_: Throwable) {
-                }
-                fail("解压失败: ${t.message}（坏包已删除，请重试）")
-            }
-        }.start()
-    }
-
-    private fun installLibs(zipFile: File) {
-        Thread {
-            try {
-                if (!zipFile.exists()) {
-                    fail("找不到运行库补丁包")
-                    return@Thread
-                }
-                status("正在安装运行库...")
-                val buf = ByteArray(64 * 1024)
-                val root = envDir.canonicalPath
-                ZipInputStream(FileInputStream(zipFile)).use { z ->
-                    while (true) {
-                        val e = z.nextEntry ?: break
-                        val f = File(envDir, e.name)
-                        if (!f.canonicalPath.startsWith(root + File.separator) &&
-                            f.canonicalPath != root
-                        ) {
-                            continue
-                        }
-                        if (e.isDirectory) {
-                            f.mkdirs()
-                            continue
-                        }
-                        f.parentFile?.mkdirs()
-                        FileOutputStream(f).use { o ->
-                            var n = z.read(buf)
-                            while (n > 0) {
-                                o.write(buf, 0, n)
-                                n = z.read(buf)
-                            }
-                        }
-                    }
-                }
-                zipFile.delete()
-                status("运行库安装完成")
-                notifyEvent("libsReady", null)
-            } catch (t: Throwable) {
-                fail("运行库安装失败: ${t.message}")
-            }
-        }.start()
-    }
-
-    private fun repairLinks() {
-        Thread {
-            val marker = File(envDir, ".links-ok")
-            if (marker.exists()) {
-                notifyEvent("linksReady", null)
-                return@Thread
-            }
-            try {
-                status("正在修复运行环境…")
-                val linkLike = Regex("^[.]{0,2}/?[A-Za-z0-9@._+/-]+$")
-                var fixed = 0
-                if (android.os.Build.VERSION.SDK_INT >= 26) {
-                    envDir.walkTopDown().forEach { f ->
-                        try {
-                            if (!f.isFile) return@forEach
-                            val len = f.length()
-                            if (len < 1L || len > 300L) return@forEach
-                            val content = f.readText().trim()
-                            if (content.isEmpty() || content.length > 300) return@forEach
-                            if (content.contains('\n') || !linkLike.matches(content)) {
-                                return@forEach
-                            }
-                            val t = File(f.parentFile, content)
-                            if (!t.exists()) return@forEach
-                            if (t.canonicalPath == f.canonicalPath) return@forEach
-                            f.delete()
-                            java.nio.file.Files.createSymbolicLink(
-                                f.toPath(),
-                                java.nio.file.Paths.get(content)
-                            )
-                            fixed++
-                        } catch (_: Throwable) {
-                        }
-                    }
-                }
-                marker.writeText("ok")
-                status("环境修复完成，共 $fixed 个链接")
-            } catch (t: Throwable) {
-                status("环境修复出错: ${t.message}")
-            }
-            notifyEvent("linksReady", null)
-        }.start()
-    }
-
-    private fun startSdk(apiKey: String) {
-        if (!isEnvReady()) {
-            fail("环境还没装好")
-            return
-        }
-        killWeb()
-        killSdk()
-
-        Thread {
-            try {
-                status("正在启动引擎...")
-                val cmd = "cd '${workDir.absolutePath}' && " +
-                    "export LD_LIBRARY_PATH='${envDir.absolutePath}/lib' && " +
-                    "export PROOT_LOADER='${envDir.absolutePath}/loader' && " +
-                    "export PROOT_LOADER_32='${envDir.absolutePath}/loader32' && " +
-                    "export PROOT_NO_SECCOMP=1 && " +
-                    "mkdir -p '${filesDir.absolutePath}/proot-tmp' && " +
-                    "export PROOT_TMP_DIR='${filesDir.absolutePath}/proot-tmp' && " +
-                    "exec '${prootBin.absolutePath}' -0 -r '${rootfsDir.absolutePath}' " +
-                    "-b /dev -b /proc -b /sys -w /root " +
-                    "/usr/bin/env HOME=/root DSH_HOME=/root/.dsh " +
-                    "DEEPSEEK_API_KEY='$apiKey' " +
-                    "/opt/node/bin/node --expose-internals " +
-                    "/opt/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js --profile sdk"
-                logEngine("[cmd] " + cmd)
-                val p = ProcessBuilder("/system/bin/sh", "-c", cmd)
-                    .directory(workDir)
-                    .redirectErrorStream(false)
-                    .start()
-                sdkProc = p
-                logEngine("[start] process launched")
-
-                synchronized(pendingRpc) {
-                    for (l in pendingRpc) {
-                        try {
-                            p.outputStream.write((l + "\n").toByteArray(Charsets.UTF_8))
-                        } catch (_: Throwable) {
-                        }
-                    }
-                    pendingRpc.clear()
-                }
-                try {
-                    p.outputStream.flush()
-                } catch (_: Throwable) {
-                }
-
-                Thread {
-                    try {
-                        BufferedReader(InputStreamReader(p.inputStream)).use { r ->
-                            sdkReaderRunning = true
-                            var line = r.readLine()
-                            while (line != null) {
-                                remember(line)
-                                logEngine("[out] " + line)
-                                notifyEvent("rpcLine", line)
-                                line = r.readLine()
-                            }
-                        }
-                    } catch (_: Throwable) {
-                    } finally {
-                        sdkReaderRunning = false
-                    }
-                }.start()
-
-                Thread {
-                    try {
-                        BufferedReader(InputStreamReader(p.errorStream)).use { r ->
-                            var line = r.readLine()
-                            while (line != null) {
-                                val s = line.trim()
-                                remember(s)
-                                logEngine("[err] " + s)
-                                if (s.isNotEmpty()) status("底层: $s")
-                                line = r.readLine()
-                            }
-                        }
-                    } catch (_: Throwable) {
-                    }
-                }.start()
-
-                Thread {
-                    var waited = 0
-                    while (sdkProc === p && p.isAlive && waited < 900) {
-                        Thread.sleep(30000)
-                        waited += 30
-                        if (sdkProc === p && p.isAlive) {
-                            logEngine("[wait] alive ${waited}s, no rpc yet")
-                        }
-                    }
-                }.start()
-
-                val code = p.waitFor()
-                logEngine("[exit] code=" + code)
-                if (sdkProc === p) {
-                    fail("引擎退出(code=$code)：${lastLogText()}")
-                }
-            } catch (t: Throwable) {
-                logEngine("[err] start fail: " + t.message)
-                fail("引擎启动失败: ${t.message}")
-            }
-        }.start()
-    }
-
-    private fun rpcSend(line: String) {
-        Thread {
-            try {
-                val p = sdkProc
-                if (p == null) {
-                    synchronized(pendingRpc) { pendingRpc.add(line) }
-                    return@Thread
-                }
-                val out = p.outputStream
-                out.write((line + "\n").toByteArray(Charsets.UTF_8))
-                out.flush()
-            } catch (_: Throwable) {
-            }
-        }.start()
-    }
-
-    private fun killSdk() {
-        try {
-            sdkProc?.destroy()
-        } catch (_: Throwable) {
-        }
-        sdkProc = null
-        sdkReaderRunning = false
-        engineReady = false
-        synchronized(pendingRpc) { pendingRpc.clear() }
-    }
-
-    private fun startWeb() {
-        if (!isEnvReady()) {
-            fail("环境还没装好")
-            return
-        }
-        killSdk()
-        if (webServer?.isAlive == true) {
-            Thread { awaitReady(webServer) }.start()
-            return
-        }
-        if (starting) return
-        starting = true
-
-        Thread {
-            try {
-                status("正在启动网页版引擎...")
-                val port = findFreePort()
-                activePort = port
-                val cmd = "cd '${workDir.absolutePath}' && " +
-                    "export LD_LIBRARY_PATH='${envDir.absolutePath}/lib' && " +
-                    "export PROOT_LOADER='${envDir.absolutePath}/loader' && " +
-                    "export PROOT_LOADER_32='${envDir.absolutePath}/loader32' && " +
-                    "export PROOT_NO_SECCOMP=1 && " +
-                    "mkdir -p '${filesDir.absolutePath}/proot-tmp' && " +
-                    "export PROOT_TMP_DIR='${filesDir.absolutePath}/proot-tmp' && " +
-                    "exec '${prootBin.absolutePath}' -0 -r '${rootfsDir.absolutePath}' " +
-                    "-b /dev -b /proc -b /sys -w /root " +
-                    "/usr/bin/env HOME=/root DSH_HOME=/root/.dsh " +
-                    "/opt/node/bin/node --expose-internals " +
-                    "/opt/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js web --no-open --port $port"
-                logEngine("[webcmd] " + cmd)
-                val p = ProcessBuilder("/system/bin/sh", "-c", cmd)
-                    .directory(workDir)
-                    .redirectErrorStream(true)
-                    .start()
-                webServer = p
-                pumpLog(p)
-                awaitReady(p)
-            } catch (t: Throwable) {
-                fail("网页版启动失败: ${t.message}")
-            } finally {
-                starting = false
-            }
-        }.start()
-    }
-
-    private fun killWeb() {
-        try {
-            webServer?.destroy()
-        } catch (_: Throwable) {
-        }
-        webServer = null
-    }
-
-    private fun pumpLog(p: Process) {
-        Thread {
-            try {
-                BufferedReader(InputStreamReader(p.inputStream)).use { r ->
-                    var line = r.readLine()
-                    while (line != null) {
-                        val s = line.trim()
-                        remember(s)
-                        logEngine("[web] " + s)
-                        val m = Regex("https?://(?:127\\.0\\.0\\.1|localhost|0\\.0\\.0\\.0):\\d+[^\\s\"'<>]*").find(s)
-                        if (m != null) {
-                            engineUrl = m.value
-                                .replace("0.0.0.0", "127.0.0.1")
-                                .replace("localhost", "127.0.0.1")
-                            portFromUrl(engineUrl)?.let { activePort = it }
-                        }
-                        line = r.readLine()
-                    }
-                }
-            } catch (_: Throwable) {
-            }
-        }.start()
-    }
-
-    private fun awaitReady(p: Process?) {
-        status("等待引擎响应...")
-        val deadline = System.currentTimeMillis() + 180_000
-        while (System.currentTimeMillis() < deadline) {
-            if (activePort == 0 && engineUrl.isNotEmpty()) {
-                portFromUrl(engineUrl)?.let { activePort = it }
-            }
-            if (activePort != 0 && portOpen(activePort)) {
-                val readyAt = System.currentTimeMillis()
-                while (engineUrl.isEmpty() &&
-                    System.currentTimeMillis() - readyAt < 3000
-                ) {
-                    Thread.sleep(100)
-                }
-                status("引擎已就绪")
-                notifyEvent(
-                    "webReady",
-                    if (engineUrl.isNotEmpty()) engineUrl
-                    else "http://127.0.0.1:$activePort/?token="
-                )
-                return
-            }
-            if (p != null && !p.isAlive) {
-                fail("引擎已退出：${lastLogText()}")
-                return
-            }
-            try {
-                Thread.sleep(200)
-            } catch (_: InterruptedException) {
-                return
-            }
-        }
-        fail("引擎启动超时（180 秒）")
-    }
-
-    private fun portOpen(port: Int = activePort): Boolean = try {
-        Socket().use { it.connect(InetSocketAddress("127.0.0.1", port), 300) }
-        true
-    } catch (_: Throwable) {
-        false
-    }
-
-    private fun openEngine(url: String) {
-        try {
-            startActivity(
-                Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            )
-        } catch (t: Throwable) {
-            fail("打不开浏览器: ${t.message}")
-        }
-    }
-
-    private fun startKeepAlive() {
-        try {
-            val intent = Intent(this, DownloadService::class.java)
-            if (android.os.Build.VERSION.SDK_INT >= 26) {
-                startForegroundService(intent)
-            } else {
-                startService(intent)
-            }
-        } catch (_: Throwable) {
-        }
-    }
-
-    private fun stopKeepAlive() {
-        try {
-            stopService(Intent(this, DownloadService::class.java))
-        } catch (_: Throwable) {
-        }
-    }
+void main() {
+  SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    systemNavigationBarColor: Colors.transparent,
+    statusBarIconBrightness: Brightness.light,
+  ));
+  runApp(const MyApp());
 }
 
-class DownloadService : android.app.Service() {
-    companion object {
-        @Volatile var currentText: String = "正在准备环境，请勿清理后台…"
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+          useMaterial3: true,
+          colorScheme: ColorScheme.fromSeed(
+              seedColor: const Color(0xFF00FFCC), brightness: Brightness.dark)),
+      home: const AppRoot(),
+    );
+  }
+}
+
+class _SwitchRequested implements Exception {}
+
+class ChatMsg {
+  final String text;
+  final bool mine;
+  ChatMsg(this.text, this.mine);
+}
+
+class AppRoot extends StatefulWidget {
+  const AppRoot({super.key});
+  @override
+  State<AppRoot> createState() => _AppRootState();
+}
+
+class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
+  static const MethodChannel _ch = MethodChannel('com.dsh.dshapp/status');
+
+  String _phase = 'env';
+
+  String _status = "正在检查环境...";
+  bool _failed = false;
+  double _progress = 0.0;
+
+  static const List<String> _envUrls = [
+    'https://ghfast.top/https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/apk.zip',
+    'https://gh-proxy.com/https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/apk.zip',
+    'https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/apk.zip',
+  ];
+  static const List<String> _envNames = ['高速镜像', '极速镜像', '官方源'];
+
+  static const int _envSize = 207615322;
+  int? _pinnedSrc;
+  int _runId = 0;
+  int _activeSrc = -1;
+  int get _selectedSrc => _pinnedSrc ?? (_activeSrc >= 0 ? _activeSrc : -1);
+  bool _downloading = false;
+  String _speed = "";
+  String _curName = "";
+  final Map<int, String> _srcInfo = {};
+  final Map<int, double> _srcBps = {};
+  DateTime _lastProgressPaint = DateTime.fromMillisecondsSinceEpoch(0);
+  Timer? _keepAliveTimer;
+  Timer? _startupTimer;
+  String _keepAliveText = "正在准备环境，请勿清理后台…";
+
+  static const String _libsUrl =
+      'https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/runtime-libs.zip';
+  Completer<void>? _libsDone;
+  Completer<void>? _linksDone;
+
+  static const List<String> _models = ['deepseek-flash', 'deepseek-v4-pro'];
+  bool _testing = false;
+  String _testResult = "";
+  String _engineLog = "";
+  String _nativeFailMsg = "";
+
+  String _apiKey = "";
+  String _model = "deepseek-flash";
+  String _appDir = "";
+  final TextEditingController _keyCtrl = TextEditingController();
+  final TextEditingController _modelCtrl =
+      TextEditingController(text: "deepseek-flash");
+
+  int _rpcId = 0;
+  final Map<int, Completer<Map<String, dynamic>?>> _pending = {};
+  String _sessionId = "";
+  bool _rpcReady = false;
+
+  final List<ChatMsg> _msgs = [];
+  String _streamText = "";
+  bool _sending = false;
+  bool _chunkSeen = false;
+  final TextEditingController _inputCtrl = TextEditingController();
+  final ScrollController _scrollCtrl = ScrollController();
+
+  WebViewController? _web;
+  String _engineUrl = "http://127.0.0.1:3090";
+
+  late AnimationController _bgController;
+  final math.Random _random = math.Random();
+  List<StarParticle> _stars = [];
+  List<CloudParticle> _clouds = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _bgController = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 16))
+      ..repeat();
+    _bgController.addListener(_updateParticles);
+    for (int i = 0; i < 6; i++) {
+      _clouds.add(_spawnCloud());
+    }
+    for (int i = 0; i < 60; i++) {
+      _stars.add(_spawnStar());
     }
 
-    private var wakeLock: android.os.PowerManager.WakeLock? = null
+    _ch.setMethodCallHandler((call) async {
+      if (!mounted) return;
+      switch (call.method) {
+        case 'updateStatus':
+          setState(() => _status = call.arguments as String);
+          break;
+        case 'failed':
+          _nativeFailMsg = call.arguments as String;
+          setState(() {
+            _failed = true;
+            _status = call.arguments as String;
+          });
+          _stopKeepAliveLoop();
+          unawaited(_keepAlive(false));
+          break;
+        case 'envReady':
+          _afterEnvReady();
+          break;
+        case 'libsReady':
+          if (_libsDone != null && !_libsDone!.isCompleted) {
+            _libsDone!.complete();
+          }
+          break;
+        case 'linksReady':
+          if (_linksDone != null && !_linksDone!.isCompleted) {
+            _linksDone!.complete();
+          }
+          break;
+        case 'rpcLine':
+          _onRpcLine(call.arguments as String);
+          break;
+        case 'webReady':
+          final arg = call.arguments;
+          final url =
+              (arg is String && arg.isNotEmpty) ? arg : "http://127.0.0.1:3090";
+          _openWeb(url);
+          break;
+        case 'log':
+          break;
+      }
+    });
+    _bootstrap();
+  }
 
-    override fun onBind(intent: Intent?): android.os.IBinder? = null
+  CloudParticle _spawnCloud() => CloudParticle(
+        x: _random.nextBool() ? -0.6 : 1.6,
+        y: _random.nextDouble() * 0.8 + 0.1,
+        radius: 0.25 + _random.nextDouble() * 0.2,
+        opacity: 0.15 + _random.nextDouble() * 0.15,
+        vx: (_random.nextBool() ? 1 : -1) *
+            (0.0005 + _random.nextDouble() * 0.0005),
+      );
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val title = "落锤"
-        val text = currentText
-        val icon = android.R.drawable.stat_sys_download
-        val pi = android.app.PendingIntent.getActivity(
-            this,
-            0,
-            Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
-            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
-        )
-        if (android.os.Build.VERSION.SDK_INT >= 26) {
-            val nm = getSystemService(android.app.NotificationManager::class.java)
-            nm?.createNotificationChannel(
-                android.app.NotificationChannel(
-                    "dsh_download",
-                    "运行状态",
-                    android.app.NotificationManager.IMPORTANCE_LOW
-                )
-            )
-            val n = android.app.Notification.Builder(this, "dsh_download")
-                .setSmallIcon(icon)
-                .setContentTitle(title)
-                .setContentText(text)
-                .setOngoing(true)
-                .setOnlyAlertOnce(true)
-                .setContentIntent(pi)
-                .build()
-            startForeground(1001, n)
-        } else {
-            val n = android.app.Notification.Builder(this)
-                .setSmallIcon(icon)
-                .setContentTitle(title)
-                .setContentText(text)
-                .setOngoing(true)
-                .setOnlyAlertOnce(true)
-                .setContentIntent(pi)
-                .build()
-            startForeground(1001, n)
+  StarParticle _spawnStar() => StarParticle(
+        x: _random.nextDouble(),
+        y: _random.nextDouble(),
+        radius: 0.5 + _random.nextDouble() * 1.2,
+        maxLife: 100 + _random.nextDouble() * 200,
+        life: 0,
+      );
+
+  void _updateParticles() {
+    if (!mounted) return;
+    setState(() {
+      for (int i = _stars.length - 1; i >= 0; i--) {
+        var star = _stars[i];
+        star.life += 1;
+        if (star.life > star.maxLife) {
+          _stars[i] = _spawnStar();
         }
+      }
+      for (int i = _clouds.length - 1; i >= 0; i--) {
+        var cloud = _clouds[i];
+        cloud.x += cloud.vx;
+        if (cloud.x < -1.0 || cloud.x > 2.0) {
+          _clouds[i] = _spawnCloud();
+        }
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _bgController.dispose();
+    _keepAliveTimer?.cancel();
+    _startupTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _bootstrap() async {
+    try {
+      _appDir = (await _ch.invokeMethod<String>('filesDirPath')) ?? "";
+      await _loadSettings();
+
+      final bool installed = await _ch.invokeMethod<bool>('checkEnv') ?? false;
+      if (installed) {
+        _afterEnvReady();
+        return;
+      }
+      await _downloadEnv();
+    } catch (e) {
+      _downloading = false;
+      _stopKeepAliveLoop();
+      unawaited(_keepAlive(false));
+      setState(() {
+        _failed = true;
+        _status = "启动失败: $e";
+      });
+    }
+  }
+
+  Future<void> _afterEnvReady() async {
+    if (!mounted) return;
+    try {
+      await _ensureLibs();
+    } catch (_) {
+      return;
+    }
+    if (_apiKey.isEmpty) {
+      setState(() {
+        _phase = "setup";
+        _failed = false;
+        _status = "需要填一次 API Key";
+      });
+      return;
+    }
+    final bool alive = await _ch.invokeMethod<bool>('engineAlive') ?? false;
+    if (alive) {
+      final bool ready = await _ch.invokeMethod<bool>('engineReady') ?? false;
+      if (ready) {
+        _rpcReady = true;
+        if (_sessionId.isEmpty) {
+          _sessionId = 's${DateTime.now().millisecondsSinceEpoch}';
+        }
+        _startKeepAliveLoop(text: "落锤 运行中 · 可切到后台");
+        setState(() {
+          _phase = "chat";
+          _failed = false;
+          _status = "";
+        });
+        return;
+      }
+      try {
+        await _ch.invokeMethod('killEngine');
+      } catch (_) {}
+    }
+    await _startEngine();
+  }
+
+  Future<void> _ensureLibs() async {
+    final guestNode = File("$_appDir/dsh-env/rootfs/opt/node/bin/node");
+    if (await guestNode.exists()) return;
+
+    setState(() {
+      _phase = "starting";
+      _failed = false;
+      _status = "首次运行，正在下载运行库(约 17MB)...";
+    });
+    try {
+      final zip = File("${Directory.systemTemp.path}/runtime-libs.zip");
+      if (await zip.exists()) await zip.delete();
+      final resp = await http
+          .get(Uri.parse(_libsUrl))
+          .timeout(const Duration(minutes: 5));
+      if (resp.statusCode != 200) {
+        throw '下载失败 HTTP ${resp.statusCode}';
+      }
+      await zip.writeAsBytes(resp.bodyBytes);
+
+      setState(() => _status = "正在安装运行库...");
+      _libsDone = Completer<void>();
+      await _ch.invokeMethod('installLibs', {'path': zip.path});
+      await _libsDone!.future.timeout(const Duration(minutes: 3));
+      setState(() => _status = "运行库就绪");
+    } catch (e) {
+      setState(() {
+        _failed = true;
+        _status = "运行库下载失败: $e";
+      });
+      rethrow;
+    }
+  }
+
+  Future<void> _repairLinks() async {
+    _linksDone = Completer<void>();
+    await _ch.invokeMethod('repairLinks');
+    try {
+      await _linksDone!.future.timeout(const Duration(minutes: 5));
+    } catch (_) {}
+  }
+
+  File get _settingsFile => File("$_appDir/native_chat_settings.json");
+
+  Future<void> _loadSettings() async {
+    try {
+      if (await _settingsFile.exists()) {
+        final m = jsonDecode(await _settingsFile.readAsString());
+        if (m is Map) {
+          _apiKey = (m['apiKey'] ?? "").toString();
+          _model = (m['model'] ?? "deepseek-flash").toString();
+        }
+      }
+    } catch (_) {}
+    _keyCtrl.text = _apiKey;
+    _modelCtrl.text = _model;
+  }
+
+  Future<void> _saveSettings() async {
+    try {
+      await _settingsFile.writeAsString(
+          jsonEncode({'apiKey': _apiKey, 'model': _model}));
+    } catch (_) {}
+  }
+
+  Future<void> _downloadEnv() async {
+    final String? zipPath = await _ch.invokeMethod<String>('envZipPath');
+    if (zipPath == null || zipPath.isEmpty) throw '拿不到安装包路径';
+    setState(() => _phase = 'env');
+    while (true) {
+      try {
+        await _download(zipPath);
+        break;
+      } on _SwitchRequested {
+        continue;
+      }
+    }
+    _startKeepAliveLoop(text: "正在解压环境，请勿清理后台…");
+    setState(() {
+      _progress = 1.0;
+      _status = "下载完成，正在解压(耗时较长)...";
+    });
+    await _ch.invokeMethod('startExtract', {'path': zipPath});
+  }
+
+  Future<void> _download(String zipPath) async {
+    final zip = File(zipPath);
+    final part = File('$zipPath.part');
+
+    if (await zip.exists() && await zip.length() > 1024) {
+      final head = await zip.openRead(0, 2).first;
+      if (head.length == 2 && head[0] == 0x50 && head[1] == 0x4B) {
+        setState(() => _progress = 1.0);
+        return;
+      }
+      await zip.delete();
+    }
+
+    int start = await part.exists() ? await part.length() : 0;
+    if (start >= _envSize) {
+      await part.delete();
+      start = 0;
+    }
+
+    setState(() {
+      _status = start > 0
+          ? "继续下载核心环境（已有 ${_mb(start)}）..."
+          : "首次启动，正在下载核心环境(约 198MB)...";
+    });
+
+    _startKeepAliveLoop(text: "正在下载环境，请勿清理后台…");
+
+    final runId = _runId;
+    _downloading = true;
+    if (_pinnedSrc == null) {
+      if (_srcBps.isEmpty) await _testSources();
+    }
+    final order = _pinnedSrc != null
+        ? <int>[_pinnedSrc!]
+        : <int>[for (int i = 0; i < _envUrls.length; i++) i]
+      ..sort((a, b) => (_srcBps[b] ?? -1).compareTo(_srcBps[a] ?? -1));
+
+    Object? lastError;
+    try {
+      for (final i in order) {
+        if (runId != _runId) throw _SwitchRequested();
+        _activeSrc = i;
+        setState(() {
+          _speed = "";
+          _curName = _envNames[i];
+        });
         try {
-            val pm = getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
-            wakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "dsh:download")
-            wakeLock?.acquire()
-        } catch (_: Throwable) {
+          await _downloadFrom(i, runId, part, start: start);
+          lastError = null;
+          _srcInfo[i] = "✓ 可用";
+          break;
+        } catch (e) {
+          lastError = e;
+          if (await part.exists()) start = await part.length();
+          _srcInfo[i] = "$e";
+          final next = order.indexOf(i) + 1;
+          if (next < order.length && mounted) {
+            setState(() => _status =
+                "${_envNames[i]} 不行，换 ${_envNames[order[next]]}...");
+          }
         }
-        return android.app.Service.START_NOT_STICKY
+      }
+      if (lastError != null) throw lastError;
+
+      final bool partOk = await part.exists() && await part.length() == _envSize;
+      if (!partOk) {
+        if (await part.exists()) await part.delete();
+        throw '下载的文件大小不对（可能是镜像的旧文件），已删除，请重试';
+      }
+      final head = await part.openRead(0, 2).first;
+      if (head.length < 2 || head[0] != 0x50 || head[1] != 0x4B) {
+        await part.delete();
+        throw '下载到的不是 zip 文件，已删除，请重试';
+      }
+      if (await zip.exists()) await zip.delete();
+      await part.rename(zip.path);
+    } finally {
+      _downloading = false;
+      _activeSrc = -1;
+    }
+  }
+
+  Future<void> _downloadFrom(int index, int runId, File part,
+      {required int start}) async {
+    final client = http.Client();
+    try {
+      final req = http.Request('GET', Uri.parse(_envUrls[index]));
+      if (start > 0) req.headers['range'] = 'bytes=$start-';
+      final resp = await client.send(req).timeout(const Duration(seconds: 15));
+      if (resp.statusCode == 416 && start > 0) return;
+      if (resp.statusCode != 200 && resp.statusCode != 206) {
+        throw 'HTTP ${resp.statusCode}';
+      }
+      if (resp.statusCode == 200) {
+        final len = resp.contentLength;
+        if (len != null && len > 0 && len != _envSize) {
+          throw '这个源上是旧文件';
+        }
+      }
+      int totalBytes = 0;
+      IOSink sink;
+      int received = start;
+      if (resp.statusCode == 206) {
+        totalBytes = _totalFromRange(resp.headers['content-range']) ??
+            (resp.contentLength ?? 0) + start;
+        if (totalBytes != _envSize) throw '这个源上是旧文件';
+        sink = part.openWrite(mode: FileMode.append);
+      } else {
+        received = 0;
+        totalBytes = resp.contentLength ?? 0;
+        sink = part.openWrite(mode: FileMode.write);
+      }
+      final done = Completer<void>();
+      final sw = Stopwatch()..start();
+      late final StreamSubscription<List<int>> sub;
+      sub = resp.stream.listen(
+        (chunk) {
+          if (runId != _runId) {
+            sub.cancel();
+            if (!done.isCompleted) done.completeError(_SwitchRequested());
+            return;
+          }
+          sink.add(chunk);
+          received += chunk.length;
+          final ms = sw.elapsedMilliseconds;
+          final bps = ms > 1000 ? received * 1000 ~/ ms : 0;
+          final now = DateTime.now();
+          if (totalBytes > 0 &&
+              now.difference(_lastProgressPaint).inMilliseconds > 250 &&
+              mounted) {
+            _lastProgressPaint = now;
+            setState(() {
+              _progress = (received / totalBytes).clamp(0.0, 1.0).toDouble();
+              _speed = _speedText(bps);
+              _curName = _envNames[index];
+              _srcInfo[index] = _speed;
+              _status = "下载中 ${_mb(received)} / ${_mb(totalBytes)}";
+            });
+          }
+          if (ms > 20000 && bps < 50 * 1024 && !done.isCompleted) {
+            sub.cancel();
+            done.completeError('该源太慢');
+          }
+        },
+        onError: (Object e) {
+          if (!done.isCompleted) done.completeError(e);
+        },
+        onDone: () {
+          if (!done.isCompleted) done.complete();
+        },
+        cancelOnError: true,
+      );
+      try {
+        await done.future;
+      } finally {
+        await sub.cancel();
+        await sink.close();
+      }
+      if (totalBytes > 0 && received < totalBytes) throw '下载不完整';
+    } finally {
+      client.close();
+    }
+  }
+
+  int? _totalFromRange(String? contentRange) {
+    if (contentRange == null) return null;
+    final i = contentRange.lastIndexOf('/');
+    if (i < 0) return null;
+    return int.tryParse(contentRange.substring(i + 1));
+  }
+
+  String _mb(int bytes) => "${(bytes / 1024 / 1024).toStringAsFixed(0)} MB";
+  String _speedText(int bps) {
+    if (bps <= 0) return "";
+    if (bps >= 1024 * 1024) {
+      return "${(bps / 1024 / 1024).toStringAsFixed(1)} MB/s";
+    }
+    return "${(bps / 1024).toStringAsFixed(0)} KB/s";
+  }
+
+  Future<void> _testSources() async {
+    final jobs = <Future<void>>[];
+    for (int i = 0; i < _envUrls.length; i++) {
+      if (mounted) setState(() => _srcInfo[i] = "测试中...");
+      jobs.add(_probeSource(i).then((res) {
+        if (mounted) setState(() => _srcInfo[i] = res);
+      }));
+    }
+    await Future.wait(jobs);
+  }
+
+  Future<String> _probeSource(int i) async {
+    final client = http.Client();
+    try {
+      final sw = Stopwatch()..start();
+      final req = http.Request('GET', Uri.parse(_envUrls[i]));
+      req.headers['range'] = 'bytes=0-524287';
+      final resp = await client.send(req).timeout(const Duration(seconds: 8));
+      int got = 0;
+      try {
+        await for (final chunk
+            in resp.stream.timeout(const Duration(seconds: 8))) {
+          got += chunk.length;
+          if (got >= 524288) break;
+        }
+      } catch (_) {}
+      if (resp.statusCode != 200 && resp.statusCode != 206) {
+        _srcBps[i] = -1;
+        return "失败";
+      }
+      if (got < 32768) {
+        _srcBps[i] = -1;
+        return "连不上";
+      }
+      final bps = got * 1000 ~/ math.max(sw.elapsedMilliseconds, 1);
+      _srcBps[i] = bps.toDouble();
+      return "≈${_speedText(bps)}";
+    } catch (_) {
+      _srcBps[i] = -1;
+      return "连不上";
+    } finally {
+      client.close();
+    }
+  }
+
+  void _autoRetest() {
+    _pinnedSrc = null;
+    _srcBps.clear();
+    _srcInfo.clear();
+    _runId++;
+    setState(() {
+      _failed = false;
+      _speed = "";
+      _curName = "";
+      _status = "正在重新测速...";
+    });
+    if (!_downloading) unawaited(_bootstrap());
+  }
+
+  void _switchSource(int i) {
+    _pinnedSrc = i;
+    _runId++;
+    setState(() {
+      _failed = false;
+      _speed = "";
+      _status = "切换到 ${_envNames[i]} 下载...";
+    });
+    if (!_downloading) unawaited(_bootstrap());
+  }
+
+  void _showSourceSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF0B1220),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => _SourceSheet(this),
+    );
+  }
+
+  Widget buildSourceSheetContent(BuildContext ctx) {
+    return SafeArea(
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 14, 20, 4),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text("选择下载源",
+                    style: TextStyle(color: Colors.white70, fontSize: 13)),
+              ),
+            ),
+            ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+              leading: const SizedBox(
+                  width: 24,
+                  child:
+                      Icon(Icons.speed, size: 20, color: Color(0xFF00FFCC))),
+              title: const Text("自动测速",
+                  style: TextStyle(color: Colors.white)),
+              trailing: _selectedSrc == -1
+                  ? const Icon(Icons.check_circle, color: Color(0xFF00FFCC))
+                  : null,
+              onTap: () {
+                Navigator.pop(ctx);
+                _autoRetest();
+              },
+            ),
+            for (int i = 0; i < _envNames.length; i++)
+              ListTile(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+                leading: const SizedBox(
+                    width: 24,
+                    child: Icon(Icons.link,
+                        size: 20, color: Color(0xCC00FFCC))),
+                title: Text(_envNames[i],
+                    style: const TextStyle(color: Colors.white)),
+                subtitle: Text(
+                    (_srcInfo[i] == null || _srcInfo[i]!.isEmpty)
+                        ? "未测"
+                        : _srcInfo[i]!,
+                    style: const TextStyle(
+                        color: Colors.white38, fontSize: 12)),
+                trailing: _selectedSrc == i
+                    ? const Icon(Icons.check_circle,
+                        color: Color(0xFF00FFCC))
+                    : null,
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _switchSource(i);
+                },
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _keepAlive(bool on) async {
+    try {
+      await _ch.invokeMethod('keepAlive', {
+        'on': on,
+        'text': _keepAliveText,
+      });
+    } catch (_) {}
+  }
+
+  void _startKeepAliveLoop({String? text}) {
+    if (text != null) _keepAliveText = text;
+    _keepAliveTimer?.cancel();
+    unawaited(_keepAlive(true));
+    _keepAliveTimer = Timer.periodic(const Duration(seconds: 25), (_) {
+      unawaited(_keepAlive(true));
+    });
+  }
+
+  void _stopKeepAliveLoop() {
+    _keepAliveTimer?.cancel();
+    _keepAliveTimer = null;
+  }
+
+  Future<void> _startEngine() async {
+    setState(() {
+      _phase = "starting";
+      _failed = false;
+      _status = "正在启动引擎…";
+    });
+    _nativeFailMsg = "";
+    _startKeepAliveLoop(text: "引擎启动中，请稍候…");
+
+    var secs = 0;
+    _startupTimer?.cancel();
+    _startupTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted || _phase != "starting") return;
+      secs++;
+      setState(() {
+        _status = "正在启动引擎… ${secs} 秒";
+      });
+    });
+    try {
+      await _ch.invokeMethod('startSdk', {
+        'apiKey': _apiKey,
+        'model': _model,
+      });
+
+      final res = await _rpc('initialize', {
+        'cwd': _appDir,
+        'provider': 'deepseek-official',
+        'model': _model,
+        'approvalRequests': false,
+      }, timeout: const Duration(minutes: 15));
+      if (res == null) throw '引擎没有响应';
+      _rpcReady = true;
+      _sessionId = 's${DateTime.now().millisecondsSinceEpoch}';
+      try {
+        await _ch.invokeMethod('setEngineReady', {'ready': true});
+      } catch (_) {}
+      _startupTimer?.cancel();
+
+      _startKeepAliveLoop(text: "落锤 运行中 · 可切到后台");
+      setState(() {
+        _phase = "chat";
+        _failed = false;
+        _status = "";
+      });
+    } catch (e) {
+      _startupTimer?.cancel();
+      setState(() {
+        _phase = "starting";
+        _failed = true;
+        _status = "引擎启动失败: $e" +
+            (_nativeFailMsg.isEmpty ? "" : "\n原生: $_nativeFailMsg");
+      });
+      _stopKeepAliveLoop();
+      unawaited(_keepAlive(false));
+    }
+  }
+
+  Future<void> _showEngineLog() async {
+    String log = "";
+    try {
+      log = (await _ch.invokeMethod<String>('readEngineLog')) ?? "";
+    } catch (e) {
+      log = "读取失败: $e";
+    }
+    if (!mounted) return;
+    _engineLog = log;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF0B1220),
+        title: const Text("引擎日志",
+            style: TextStyle(color: Colors.white, fontSize: 15)),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: 420,
+          child: SingleChildScrollView(
+            child: SelectableText(
+              _engineLog.isEmpty ? "(空)" : _engineLog,
+              style: const TextStyle(
+                  color: Colors.white70, fontSize: 11, height: 1.35),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("关闭", style: TextStyle(color: Color(0xFF00FFCC))),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<Map<String, dynamic>?> _rpc(String method, Map<String, dynamic> params,
+      {Duration timeout = const Duration(seconds: 60)}) async {
+    if (!mounted) return null;
+    final id = ++_rpcId;
+    final c = Completer<Map<String, dynamic>?>();
+    _pending[id] = c;
+    try {
+      await _ch.invokeMethod('rpcSend', {
+        'line': jsonEncode({
+          'jsonrpc': '2.0',
+          'id': id,
+          'method': method,
+          'params': params,
+        })
+      });
+    } catch (e) {
+      _pending.remove(id);
+      rethrow;
+    }
+    return c.future.timeout(timeout, onTimeout: () {
+      _pending.remove(id);
+      throw TimeoutException('等待引擎响应超时');
+    });
+  }
+
+  void _onRpcLine(String line) {
+    final t = line.trim();
+    if (t.isEmpty) return;
+    Map<String, dynamic> m;
+    try {
+      final decoded = jsonDecode(t);
+      if (decoded is! Map) return;
+      m = decoded.cast<String, dynamic>();
+    } catch (_) {
+      return;
     }
 
-    override fun onDestroy() {
-        try {
-            wakeLock?.release()
-        } catch (_: Throwable) {
+    if (m.containsKey('id')) {
+      final id = m['id'];
+      if (id is int) {
+        final c = _pending.remove(id);
+        if (c != null && !c.isCompleted) {
+          final err = m['error'];
+          if (err != null) {
+            final msg = err is Map ? (err['message'] ?? '$err') : '$err';
+            c.completeError(msg.toString());
+          } else {
+            final r = m['result'];
+            c.complete(
+                r is Map ? r.cast<String, dynamic>() : <String, dynamic>{});
+          }
         }
-        wakeLock = null
-        super.onDestroy()
+      }
+      return;
     }
+
+    final method = m['method'];
+    final params = (m['params'] is Map)
+        ? (m['params'] as Map).cast<String, dynamic>()
+        : <String, dynamic>{};
+    if (method == 'session.event') {
+      final sid = params['sessionId'];
+      if (sid is String && sid.isNotEmpty) _sessionId = sid;
+      final ev = (params['event'] is Map)
+          ? (params['event'] as Map).cast<String, dynamic>()
+          : <String, dynamic>{};
+      final type = ev['type']?.toString() ?? '';
+      final data = ev['data'];
+      if (type == 'assistant/live-chunk' || type == 'assistant/chunk') {
+        final chunk = (data is Map && data['chunk'] is Map)
+            ? (data['chunk'] as Map)
+            : (data is Map ? data : const <String, dynamic>{});
+        final ctype = chunk['type']?.toString() ?? '';
+        if (ctype == 'text-delta' || ctype.isEmpty) {
+          final txt = chunk['text']?.toString() ?? _textOf(chunk);
+          if (txt.isNotEmpty) {
+            _chunkSeen = true;
+            setState(() => _streamText += txt);
+            _scrollToEnd();
+          }
+        }
+      } else if (type == 'assistant/message') {
+        final finalText = _messageText(data);
+        setState(() {
+          final out = finalText.isNotEmpty ? finalText : _streamText;
+          if (out.isNotEmpty) {
+            _msgs.add(ChatMsg(out, false));
+          }
+          _streamText = "";
+          _chunkSeen = false;
+          _sending = false;
+        });
+        _scrollToEnd();
+      } else if (type == 'turn/end') {
+        setState(() {
+          if (_streamText.isNotEmpty) {
+            _msgs.add(ChatMsg(_streamText, false));
+            _streamText = "";
+          }
+          _sending = false;
+          _chunkSeen = false;
+        });
+        _scrollToEnd();
+      }
+    } else if (method == 'session.status') {
+    } else if (method == 'session.query.completed') {
+      final fr = params['finalResponse'];
+      final txt = _messageText(fr);
+      setState(() {
+        if (_streamText.isNotEmpty) {
+          _msgs.add(ChatMsg(_streamText, false));
+          _streamText = "";
+        } else if (txt.isNotEmpty) {
+          _msgs.add(ChatMsg(txt, false));
+        }
+        _sending = false;
+        _chunkSeen = false;
+      });
+      _scrollToEnd();
+    }
+  }
+
+  String _messageText(dynamic data) {
+    if (data is Map) {
+      final msg = data['message'];
+      if (msg is Map) {
+        final content = msg['content'];
+        if (content is List) {
+          final b = StringBuffer();
+          for (final blk in content) {
+            if (blk is Map) {
+              final type = blk['type']?.toString();
+              if (type == 'text' && blk['text'] is String) {
+                b.write(blk['text']);
+              }
+            }
+          }
+          if (b.isNotEmpty) return b.toString();
+        }
+      }
+    }
+    return _textOf(data);
+  }
+
+  String _textOf(dynamic o) {
+    if (o is String) return "";
+    if (o is List) {
+      final b = StringBuffer();
+      for (final e in o) {
+        b.write(_textOf(e));
+      }
+      return b.toString();
+    }
+    if (o is Map) {
+      final b = StringBuffer();
+      for (final k in ['text', 'textDelta', 'content', 'body']) {
+        final v = o[k];
+        if (v is String) {
+          b.write(v);
+        } else if (v is Map || v is List) {
+          b.write(_textOf(v));
+        }
+      }
+      if (b.isNotEmpty) return b.toString();
+      for (final v in o.values) {
+        if (v is Map || v is List) b.write(_textOf(v));
+      }
+      return b.toString();
+    }
+    return "";
+  }
+
+  Future<void> _send() async {
+    final text = _inputCtrl.text.trim();
+    if (text.isEmpty || _sending || !_rpcReady) return;
+    _inputCtrl.clear();
+    setState(() {
+      _msgs.add(ChatMsg(text, true));
+      _sending = true;
+      _streamText = "";
+      _chunkSeen = false;
+    });
+    _scrollToEnd();
+    Timer(const Duration(seconds: 90), () {
+      if (!mounted) return;
+      if (_sending && _streamText.isEmpty) {
+        setState(() {
+          _sending = false;
+          _msgs.add(ChatMsg("引擎 90 秒没有回应，可以先点右上角「网页版」，或重启 App 再试", false));
+        });
+        _scrollToEnd();
+      }
+    });
+    try {
+      await _rpc('session/query', {
+        'sessionId': _sessionId,
+        'contentBlocks': [
+          {'type': 'text', 'text': text}
+        ],
+      }, timeout: const Duration(minutes: 10));
+    } catch (e) {
+      setState(() {
+        _sending = false;
+        _msgs.add(ChatMsg("发送失败: $e", false));
+      });
+      _scrollToEnd();
+    }
+  }
+
+  void _scrollToEnd() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollCtrl.hasClients) {
+        _scrollCtrl.animateTo(_scrollCtrl.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
+      }
+    });
+  }
+
+  Future<void> _switchToWeb() async {
+    setState(() {
+      _status = "正在启动网页版...";
+      _failed = false;
+    });
+    try {
+      await _ch.invokeMethod('startWeb');
+    } catch (e) {
+      setState(() {
+        _failed = true;
+        _status = "网页版启动失败: $e";
+      });
+    }
+  }
+
+  void _openWeb(String url) {
+    _engineUrl = url;
+    final c = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setBackgroundColor(const Color(0xFF03060A))
+      ..loadRequest(Uri.parse(url));
+    setState(() {
+      _web = c;
+      _phase = "web";
+    });
+  }
+
+  void _saveSettingsAndStart() {
+    final key = _keyCtrl.text.trim();
+    final model = _modelCtrl.text.trim().isEmpty
+        ? "deepseek-flash"
+        : _modelCtrl.text.trim();
+    setState(() {
+      _apiKey = key;
+      _model = model;
+    });
+    unawaited(_saveSettings());
+    unawaited(_startEngine());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final web = _web;
+    if (web != null) return _buildWeb(web);
+
+    switch (_phase) {
+      case "chat":
+        return _buildChat();
+      case "setup":
+        return _buildSetup();
+      default:
+        return _buildSplash();
+    }
+  }
+
+  Widget _buildSplash() {
+    final size = MediaQuery.sizeOf(context);
+    final landscape = size.width > size.height;
+    final short = math.min(size.width, size.height);
+    final s = (short / 400).clamp(0.85, 1.5);
+    final pad = 20 * s;
+    final avail = math.max(size.width - pad * 2, 200.0);
+    final logo = (short * 0.22).clamp(64.0, 110.0);
+    final logoW = logo * 1.5;
+    final gap = 24 * s;
+    double textW = avail - logoW - gap;
+    final sideBySide = landscape || textW >= 150 * s;
+    if (!sideBySide) textW = avail;
+    final showBar = _progress > 0 || _downloading;
+
+    final texts = SizedBox(
+      width: textW,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _CenterText("落锤",
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 20 * s,
+                height: 1.3,
+                letterSpacing: 4 * s,
+                fontWeight: FontWeight.w600,
+              )),
+          SizedBox(height: 8 * s),
+          _CenterText("DeepSeek Harness",
+              style: TextStyle(
+                color: const Color(0x66FFFFFF),
+                fontSize: 11.5 * s,
+                height: 1.4,
+                letterSpacing: 1 * s,
+              )),
+          SizedBox(height: 26 * s),
+          if (showBar) ...[
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: LinearProgressIndicator(
+                value: _progress > 0 ? _progress : null,
+                minHeight: 5,
+                backgroundColor: Colors.white10,
+                color: const Color(0xFF00FFCC),
+              ),
+            ),
+            SizedBox(height: 14 * s),
+          ],
+          _CenterText(_status,
+              style: TextStyle(
+                color: const Color(0xCCFFFFFF),
+                fontSize: 13 * s,
+                height: 1.6,
+                letterSpacing: 0.6 * s,
+              )),
+          if (_downloading && _curName.isNotEmpty) ...[
+            SizedBox(height: 8 * s),
+            _CenterText(
+                "$_curName · ${_speed.isEmpty ? "连接中…" : _speed}",
+                style: TextStyle(
+                  color: const Color(0x80FFFFFF),
+                  fontSize: 12 * s,
+                  height: 1.5,
+                )),
+          ],
+          SizedBox(height: 10 * s),
+          if (!_failed)
+            _CenterText("首次启动需要准备运行环境，请耐心等待",
+                style: TextStyle(
+                  color: const Color(0x40FFFFFF),
+                  fontSize: 11 * s,
+                  height: 1.5,
+                )),
+          if (_failed) ...[
+            SizedBox(height: 8 * s),
+            _ActionButton(label: "重试", primary: true, onTap: _bootstrap),
+            SizedBox(height: 10 * s),
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 10 * s,
+              runSpacing: 8 * s,
+              children: [
+                _ActionButton(
+                    label: "查看引擎日志", primary: false, onTap: _showEngineLog),
+                _ActionButton(
+                    label: "网页版", primary: false, onTap: _switchToWeb),
+              ],
+            ),
+          ],
+          if (_downloading || _failed) ...[
+            SizedBox(height: 14 * s),
+            _ActionButton(label: "换源", primary: false, onTap: _showSourceSheet),
+          ],
+        ],
+      ),
+    );
+
+    final logoBox = Container(
+      width: logoW,
+      height: logoW,
+      decoration: const BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: RadialGradient(
+          colors: [Color(0x3300FFCC), Color(0x0000FFCC)],
+          stops: [0.30, 1.0],
+        ),
+      ),
+      alignment: Alignment.center,
+      child: SizedBox(
+        width: logo,
+        height: logo,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Image.asset('assets/logo.png',
+                width: logo,
+                height: logo,
+                fit: BoxFit.contain,
+                color: Colors.white,
+                colorBlendMode: BlendMode.srcIn),
+            if (showBar)
+              SizedBox(
+                width: logo + 14,
+                height: logo + 14,
+                child: CircularProgressIndicator(
+                  value: _progress > 0 ? _progress : null,
+                  strokeWidth: 2.2,
+                  backgroundColor: Colors.white10,
+                  color: const Color(0xFF00FFCC),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+
+    final content = sideBySide
+        ? Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              logoBox,
+              SizedBox(width: gap),
+              texts,
+            ],
+          )
+        : Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              logoBox,
+              SizedBox(height: 18 * s),
+              texts,
+            ],
+          );
+
+    return Container(
+      color: const Color(0xFF03060A),
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: CustomPaint(painter: StarryCloudPainter(_clouds, _stars)),
+          ),
+          SafeArea(
+            child: LayoutBuilder(
+              builder: (ctx, c) => SingleChildScrollView(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(minHeight: c.maxHeight),
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: pad,
+                      vertical: 16 * s,
+                    ),
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(maxWidth: avail),
+                        child: content,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSetup() {
+    final currentModel = _models.contains(_modelCtrl.text.trim())
+        ? _modelCtrl.text.trim()
+        : _models.first;
+    const radius = BorderRadius.all(Radius.circular(14));
+    const fieldBorder = OutlineInputBorder(
+      borderRadius: radius,
+      borderSide: BorderSide(color: Color(0x22FFFFFF)),
+    );
+    return Container(
+      color: const Color(0xFF03060A),
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: CustomPaint(painter: StarryCloudPainter(_clouds, _stars)),
+          ),
+          SafeArea(
+            child: Center(
+              child: SingleChildScrollView(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Icon(Icons.vpn_key_outlined,
+                        size: 44, color: Color(0xFF00FFCC)),
+                    const SizedBox(height: 20),
+                    _CenterText("第一次使用，需要填一下模型信息",
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 17,
+                            height: 1.5,
+                            fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 6),
+                    _CenterText("API Key 只保存在本机，不会上传",
+                        style: const TextStyle(
+                            color: Colors.white38, fontSize: 12, height: 1.5)),
+                    const SizedBox(height: 30),
+                    TextField(
+                      controller: _keyCtrl,
+                      obscureText: true,
+                      style: const TextStyle(color: Colors.white, fontSize: 14),
+                      decoration: const InputDecoration(
+                        labelText: "DeepSeek API Key",
+                        hintText: "sk-…",
+                        labelStyle:
+                            TextStyle(color: Color(0x99FFFFFF), fontSize: 13),
+                        hintStyle:
+                            TextStyle(color: Color(0x44FFFFFF), fontSize: 13),
+                        filled: true,
+                        fillColor: Color(0xFF0E141B),
+                        contentPadding:
+                            EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                        enabledBorder: fieldBorder,
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: radius,
+                          borderSide: BorderSide(color: Color(0x9900FFCC)),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0E141B),
+                        borderRadius: radius,
+                        border: Border.all(color: const Color(0x22FFFFFF)),
+                      ),
+                      child: Row(
+                        children: [
+                          _LeftText("模型",
+                              style: const TextStyle(
+                                  color: Color(0x99FFFFFF), fontSize: 13)),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: DropdownButtonHideUnderline(
+                              child: DropdownButton<String>(
+                                value: currentModel,
+                                isExpanded: true,
+                                dropdownColor: const Color(0xFF0E141B),
+                                style: const TextStyle(
+                                    color: Colors.white, fontSize: 14),
+                                items: [
+                                  for (final m in _models)
+                                    DropdownMenuItem(
+                                      value: m,
+                                      child: Text(m,
+                                          style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 14)),
+                                    ),
+                                ],
+                                onChanged: (v) {
+                                  if (v == null) return;
+                                  setState(() {
+                                    _modelCtrl.text = v;
+                                    _testResult = "";
+                                  });
+                                },
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        TextButton.icon(
+                          onPressed: _testing ? null : _testKey,
+                          icon: _testing
+                              ? const SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Color(0xFF00FFCC)))
+                              : const Icon(Icons.wifi_tethering,
+                                  size: 16, color: Color(0xFF00FFCC)),
+                          label: const Text("测试连接",
+                              style: TextStyle(
+                                  color: Color(0xFF00FFCC), fontSize: 13)),
+                        ),
+                        Expanded(
+                          child: Text(
+                            _testResult,
+                            textAlign: TextAlign.right,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: _testResult.startsWith("✓")
+                                  ? const Color(0xFF00FFCC)
+                                  : Colors.white54,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      height: 48,
+                      child: FilledButton(
+                        onPressed: _saveSettingsAndStart,
+                        style: FilledButton.styleFrom(
+                          backgroundColor: const Color(0xFF00FFCC),
+                          foregroundColor: const Color(0xFF03211D),
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(24)),
+                        ),
+                        child: const Text("保存并启动",
+                            style: TextStyle(
+                                fontSize: 15, fontWeight: FontWeight.w600)),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextButton(
+                      onPressed: _switchToWeb,
+                      child: const Text("先用网页版",
+                          style:
+                              TextStyle(color: Colors.white38, fontSize: 13)),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _testKey() async {
+    final key = _keyCtrl.text.trim();
+    if (key.isEmpty) {
+      setState(() => _testResult = "先填 API Key");
+      return;
+    }
+    setState(() {
+      _testing = true;
+      _testResult = "";
+    });
+    try {
+      final resp = await http.get(
+        Uri.parse("https://api.deepseek.com/models"),
+        headers: {"Authorization": "Bearer $key"},
+      ).timeout(const Duration(seconds: 20));
+      if (!mounted) return;
+      if (resp.statusCode == 200) {
+        setState(() => _testResult = "✓ 连接成功");
+      } else if (resp.statusCode == 401 || resp.statusCode == 403) {
+        setState(() => _testResult = "✗ Key 无效（${resp.statusCode}）");
+      } else {
+        setState(() => _testResult = "✗ HTTP ${resp.statusCode}");
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _testResult = "✗ 网络不通：$e");
+    } finally {
+      if (mounted) setState(() => _testing = false);
+    }
+  }
+
+  Widget _buildChat() {
+    const none = TextDecoration.none;
+    return Container(
+      color: const Color(0xFF03060A),
+      child: SafeArea(
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 10, 8, 6),
+              child: Row(
+                children: [
+                  const Text("落锤",
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 1,
+                          decoration: none,
+                          decorationColor: Colors.transparent)),
+                  const Spacer(),
+                  IconButton(
+                    tooltip: "网页版",
+                    onPressed: _switchToWeb,
+                    icon: const Icon(Icons.public,
+                        size: 20, color: Color(0xFF00FFCC)),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: ListView.builder(
+                controller: _scrollCtrl,
+                padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+                itemCount: _msgs.length + (_streamText.isNotEmpty ? 1 : 0),
+                itemBuilder: (ctx, i) {
+                  final isStream = i == _msgs.length;
+                  final text = isStream ? _streamText : _msgs[i].text;
+                  final mine = isStream ? false : _msgs[i].mine;
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 5),
+                    child: Align(
+                      alignment: mine
+                          ? Alignment.centerRight
+                          : Alignment.centerLeft,
+                      child: Container(
+                        constraints: BoxConstraints(
+                          maxWidth: MediaQuery.sizeOf(context).width * 0.82,
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: mine
+                              ? const Color(0xFF14524A)
+                              : const Color(0xFF141A22),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Text(text,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 15,
+                              height: 1.5,
+                              decoration: none,
+                              decorationColor: Colors.transparent,
+                            )),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+            if (_sending)
+              const Padding(
+                padding: EdgeInsets.only(bottom: 6),
+                child: SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Color(0xFF00FFCC))),
+              ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _inputCtrl,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          decoration: none,
+                          decorationColor: Colors.transparent),
+                      minLines: 1,
+                      maxLines: 4,
+                      onSubmitted: (_) => _send(),
+                      decoration: InputDecoration(
+                        hintText: "说点什么…",
+                        hintStyle: const TextStyle(
+                            color: Colors.white38,
+                            fontSize: 15,
+                            decoration: none,
+                            decorationColor: Colors.transparent),
+                        filled: true,
+                        fillColor: Colors.white10,
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(22),
+                            borderSide: BorderSide.none),
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 18, vertical: 14),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    onPressed: _sending ? null : _send,
+                    icon: Icon(Icons.send,
+                        size: 26,
+                        color: _sending
+                            ? Colors.white24
+                            : const Color(0xFF00FFCC)),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWeb(WebViewController web) {
+    return Container(
+      color: const Color(0xFF03060A),
+      child: Stack(
+        children: [
+          Positioned.fill(child: WebViewWidget(controller: web)),
+          Positioned(
+            top: 0,
+            right: 0,
+            child: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.only(top: 8, right: 10),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _webButton(Icons.refresh, () => web.reload()),
+                    const SizedBox(width: 8),
+                    _webButton(Icons.arrow_back, () async {
+                      try {
+                        await _ch.invokeMethod('openEngine', {'url': _engineUrl});
+                      } catch (_) {}
+                    }),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _webButton(IconData icon, VoidCallback onTap) {
+    return Material(
+      color: Colors.black54,
+      shape: const CircleBorder(),
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(8),
+          child: Icon(icon, size: 20, color: const Color(0xFF00FFCC)),
+        ),
+      ),
+    );
+  }
+}
+
+class _SourceSheet extends StatefulWidget {
+  final _AppRootState host;
+  const _SourceSheet(this.host);
+
+  @override
+  State<_SourceSheet> createState() => _SourceSheetState();
+}
+
+class _SourceSheetState extends State<_SourceSheet> {
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(milliseconds: 400), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) =>
+      widget.host.buildSourceSheetContent(context);
+}
+
+class _LeftText extends StatelessWidget {
+  final String text;
+  final TextStyle style;
+  const _LeftText(this.text, {required this.style});
+
+  @override
+  Widget build(BuildContext context) {
+    final tp = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: TextDirection.ltr,
+      maxLines: 1,
+    )..layout();
+    return CustomPaint(
+      size: Size(tp.width, tp.height),
+      painter: _TextDrawPainter(text, style),
+    );
+  }
+}
+
+class _ActionButton extends StatelessWidget {
+  final String label;
+  final bool primary;
+  final VoidCallback onTap;
+  const _ActionButton({
+    required this.label,
+    required this.primary,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (primary) {
+      return SizedBox(
+        width: 190,
+        height: 44,
+        child: FilledButton(
+          onPressed: onTap,
+          style: FilledButton.styleFrom(
+            backgroundColor: const Color(0xFF00FFCC),
+            foregroundColor: const Color(0xFF03211D),
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(22),
+            ),
+          ),
+          child: Text(label,
+              style: const TextStyle(
+                  fontSize: 14, fontWeight: FontWeight.w600, letterSpacing: 1)),
+        ),
+      );
+    }
+    return SizedBox(
+      height: 40,
+      child: OutlinedButton(
+        onPressed: onTap,
+        style: OutlinedButton.styleFrom(
+          side: const BorderSide(color: Color(0x5500FFCC)),
+          foregroundColor: const Color(0xFF00FFCC),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 18),
+        ),
+        child: Text(label,
+            style: const TextStyle(fontSize: 13, letterSpacing: 0.6)),
+      ),
+    );
+  }
+}
+
+class _StatusBadge extends StatelessWidget {
+  final String text;
+  const _StatusBadge(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 320),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+      decoration: BoxDecoration(
+        color: const Color(0x99101A24),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0x3300FFCC), width: 1),
+        boxShadow: const [
+          BoxShadow(color: Color(0x1A00FFCC), blurRadius: 22, spreadRadius: 1),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(
+            width: 13,
+            height: 13,
+            child: CircularProgressIndicator(
+              strokeWidth: 1.8,
+              color: Color(0xFF00FFCC),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Flexible(
+            child: _CenterText(
+              text,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 13.2,
+                height: 1.45,
+                letterSpacing: 0.2,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CenterText extends StatelessWidget {
+  final String text;
+  final TextStyle style;
+  const _CenterText(this.text, {required this.style});
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(builder: (ctx, c) {
+      final tp = TextPainter(
+        text: TextSpan(text: text, style: style),
+        textAlign: TextAlign.center,
+        textDirection: TextDirection.ltr,
+        maxLines: 3,
+        ellipsis: '…',
+      )..layout(minWidth: c.maxWidth, maxWidth: c.maxWidth);
+      return CustomPaint(
+        size: Size(c.maxWidth, tp.height),
+        painter: _TextDrawPainter(text, style),
+      );
+    });
+  }
+}
+
+class _TextDrawPainter extends CustomPainter {
+  final String text;
+  final TextStyle style;
+  _TextDrawPainter(this.text, this.style);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final tp = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textAlign: TextAlign.center,
+      textDirection: TextDirection.ltr,
+      maxLines: 3,
+      ellipsis: '…',
+    )..layout(minWidth: size.width, maxWidth: size.width);
+    tp.paint(canvas, Offset.zero);
+  }
+
+  @override
+  bool shouldRepaint(covariant _TextDrawPainter old) =>
+      old.text != text || old.style != style;
+}
+
+class StarParticle {
+  double x, y, radius, maxLife, life;
+  StarParticle(
+      {required this.x,
+      required this.y,
+      required this.radius,
+      required this.maxLife,
+      required this.life});
+}
+
+class CloudParticle {
+  double x, y, radius, opacity, vx;
+  CloudParticle(
+      {required this.x,
+      required this.y,
+      required this.radius,
+      required this.opacity,
+      required this.vx});
+}
+
+class StarryCloudPainter extends CustomPainter {
+  final List<CloudParticle> clouds;
+  final List<StarParticle> stars;
+  StarryCloudPainter(this.clouds, this.stars);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final cloudPaint = Paint()
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 60.0);
+    for (var cloud in clouds) {
+      final centerOffset = Offset(cloud.x * size.width, cloud.y * size.height);
+      final baseRadius = cloud.radius * size.width;
+      cloudPaint.color = Colors.grey.withOpacity(cloud.opacity);
+      canvas.drawCircle(centerOffset, baseRadius, cloudPaint);
+      canvas.drawCircle(
+          Offset(centerOffset.dx - baseRadius * 0.6,
+              centerOffset.dy + baseRadius * 0.1),
+          baseRadius * 0.7,
+          cloudPaint);
+      canvas.drawCircle(
+          Offset(centerOffset.dx + baseRadius * 0.7,
+              centerOffset.dy - baseRadius * 0.1),
+          baseRadius * 0.8,
+          cloudPaint);
+      canvas.drawCircle(
+          Offset(centerOffset.dx + baseRadius * 0.2,
+              centerOffset.dy - baseRadius * 0.5),
+          baseRadius * 0.6,
+          cloudPaint);
+    }
+    final starPaint = Paint()..style = PaintingStyle.fill;
+    for (var star in stars) {
+      double lifeProgress = star.life / star.maxLife;
+      double opacity = math.sin(lifeProgress * math.pi);
+      starPaint.color = Colors.white.withOpacity(opacity);
+      canvas.drawCircle(Offset(star.x * size.width, star.y * size.height),
+          star.radius, starPaint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant StarryCloudPainter oldDelegate) => true;
 }
