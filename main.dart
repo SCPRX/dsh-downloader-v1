@@ -1037,7 +1037,8 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   }
 
   Widget _buildSplash() {
-    final logo = math.min(150.0, MediaQuery.sizeOf(context).width * 0.36);
+    final logo = math.min(126.0, MediaQuery.sizeOf(context).width * 0.30);
+    final showBar = _progress > 0 || _downloading;
     return Container(
       color: const Color(0xFF03060A),
       child: Stack(
@@ -1052,84 +1053,141 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                   constraints: BoxConstraints(minHeight: c.maxHeight),
                   child: Padding(
                     padding:
-                        const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                        const EdgeInsets.symmetric(horizontal: 30, vertical: 28),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        SizedBox(
-                          width: logo,
-                          height: logo,
-                          child: Stack(
-                            alignment: Alignment.center,
-                            children: [
-                              Image.asset('assets/logo.png',
-                                  width: logo,
-                                  height: logo,
-                                  fit: BoxFit.contain,
-                                  color: Colors.white,
-                                  colorBlendMode: BlendMode.srcIn),
-                              SizedBox(
-                                width: logo,
-                                height: logo,
-                                child: CircularProgressIndicator(
-                                  value: _progress > 0 ? _progress : null,
-                                  strokeWidth: 3.0,
-                                  backgroundColor: Colors.white12,
-                                  color: const Color(0xFF00FFCC),
-                                  strokeAlign: CircularProgressIndicator
-                                      .strokeAlignCenter,
-                                ),
-                              ),
-                            ],
+                        // logo + 柔光
+                        Container(
+                          width: logo * 1.5,
+                          height: logo * 1.5,
+                          decoration: const BoxDecoration(
+                            shape: BoxShape.circle,
+                            gradient: RadialGradient(
+                              colors: [Color(0x3300FFCC), Color(0x0000FFCC)],
+                              stops: [0.30, 1.0],
+                            ),
+                          ),
+                          alignment: Alignment.center,
+                          child: SizedBox(
+                            width: logo,
+                            height: logo,
+                            child: Stack(
+                              alignment: Alignment.center,
+                              children: [
+                                Image.asset('assets/logo.png',
+                                    width: logo,
+                                    height: logo,
+                                    fit: BoxFit.contain,
+                                    color: Colors.white,
+                                    colorBlendMode: BlendMode.srcIn),
+                                if (showBar)
+                                  SizedBox(
+                                    width: logo + 14,
+                                    height: logo + 14,
+                                    child: CircularProgressIndicator(
+                                      value: _progress > 0 ? _progress : null,
+                                      strokeWidth: 2.2,
+                                      backgroundColor: Colors.white10,
+                                      color: const Color(0xFF00FFCC),
+                                    ),
+                                  ),
+                              ],
+                            ),
                           ),
                         ),
                         const SizedBox(height: 30),
-                        _StatusBadge(_status),
-                        if (_downloading) ...[
-                          const SizedBox(height: 14),
+                        _CenterText("原生 DSH",
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 20,
+                              height: 1.3,
+                              letterSpacing: 4.0,
+                              fontWeight: FontWeight.w600,
+                            )),
+                        const SizedBox(height: 10),
+                        _CenterText("DeepSeek Harness · 本地引擎",
+                            style: const TextStyle(
+                              color: Color(0x66FFFFFF),
+                              fontSize: 11.5,
+                              height: 1.4,
+                              letterSpacing: 1.0,
+                            )),
+                        const SizedBox(height: 38),
+                        if (showBar) ...[
+                          SizedBox(
+                            width: math.min(260.0, c.maxWidth * 0.72),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: LinearProgressIndicator(
+                                value: _progress > 0 ? _progress : null,
+                                minHeight: 5,
+                                backgroundColor: Colors.white10,
+                                color: const Color(0xFF00FFCC),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                        ],
+                        _CenterText(_status,
+                            style: const TextStyle(
+                              color: Color(0xCCFFFFFF),
+                              fontSize: 13,
+                              height: 1.6,
+                              letterSpacing: 0.6,
+                            )),
+                        if (_downloading && _curName.isNotEmpty) ...[
+                          const SizedBox(height: 10),
                           _CenterText(
-                              _curName.isEmpty
-                                  ? ""
-                                  : "$_curName · ${_speed.isEmpty ? "连接中…" : _speed}",
+                              "$_curName · ${_speed.isEmpty ? "连接中…" : _speed}",
                               style: const TextStyle(
-                                color: Color(0x99FFFFFF),
-                                fontSize: 12.5,
-                                height: 1.4,
-                                letterSpacing: 0.3,
+                                color: Color(0x80FFFFFF),
+                                fontSize: 12,
+                                height: 1.5,
+                                letterSpacing: 0.4,
                               )),
                         ],
+                        const SizedBox(height: 12),
+                        if (!_failed)
+                          _CenterText("首次启动需要准备运行环境，请耐心等待",
+                              style: const TextStyle(
+                                color: Color(0x40FFFFFF),
+                                fontSize: 11,
+                                height: 1.5,
+                                letterSpacing: 0.3,
+                              )),
                         if (_failed) ...[
-                          const SizedBox(height: 14),
-                          TextButton(
-                            onPressed: _bootstrap,
-                            child: const Text("重试",
-                                style: TextStyle(color: Color(0xFF00FFCC))),
+                          const SizedBox(height: 10),
+                          _ActionButton(
+                            label: "重试",
+                            primary: true,
+                            onTap: _bootstrap,
                           ),
-                          TextButton(
-                            onPressed: _showEngineLog,
-                            child: const Text("查看引擎日志",
-                                style: TextStyle(color: Colors.white70)),
-                          ),
-                          TextButton(
-                            onPressed: _switchToWeb,
-                            child: const Text("用网页版打开",
-                                style: TextStyle(color: Colors.white54)),
+                          const SizedBox(height: 10),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              _ActionButton(
+                                label: "查看引擎日志",
+                                primary: false,
+                                onTap: _showEngineLog,
+                              ),
+                              const SizedBox(width: 10),
+                              _ActionButton(
+                                label: "网页版",
+                                primary: false,
+                                onTap: _switchToWeb,
+                              ),
+                            ],
                           ),
                         ],
                         if (_downloading || _failed) ...[
-                          const SizedBox(height: 16),
-                          OutlinedButton(
-                            onPressed: _showSourceSheet,
-                            style: OutlinedButton.styleFrom(
-                              side: const BorderSide(color: Color(0x4400FFCC)),
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(20)),
-                              minimumSize: const Size(120, 40),
-                            ),
-                            child: const Text("换源",
-                                style: TextStyle(
-                                    color: Color(0xFF00FFCC), fontSize: 14)),
+                          const SizedBox(height: 18),
+                          _ActionButton(
+                            label: "换源",
+                            primary: false,
+                            onTap: _showSourceSheet,
                           ),
                         ],
                       ],
@@ -1554,7 +1612,59 @@ class _LeftText extends StatelessWidget {
   }
 }
 
-/// 状态胶囊：带小转圈、半透明底和青色描边，比裸文字好看
+/// 统一样式的按钮：主按钮青色实心，次按钮描边
+class _ActionButton extends StatelessWidget {
+  final String label;
+  final bool primary;
+  final VoidCallback onTap;
+  const _ActionButton({
+    required this.label,
+    required this.primary,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (primary) {
+      return SizedBox(
+        width: 190,
+        height: 44,
+        child: FilledButton(
+          onPressed: onTap,
+          style: FilledButton.styleFrom(
+            backgroundColor: const Color(0xFF00FFCC),
+            foregroundColor: const Color(0xFF03211D),
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(22),
+            ),
+          ),
+          child: Text(label,
+              style: const TextStyle(
+                  fontSize: 14, fontWeight: FontWeight.w600, letterSpacing: 1)),
+        ),
+      );
+    }
+    return SizedBox(
+      height: 40,
+      child: OutlinedButton(
+        onPressed: onTap,
+        style: OutlinedButton.styleFrom(
+          side: const BorderSide(color: Color(0x5500FFCC)),
+          foregroundColor: const Color(0xFF00FFCC),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 18),
+        ),
+        child: Text(label,
+            style: const TextStyle(fontSize: 13, letterSpacing: 0.6)),
+      ),
+    );
+  }
+}
+
+/// 状态胶囊（备用，当前未使用）
 class _StatusBadge extends StatelessWidget {
   final String text;
   const _StatusBadge(this.text);
@@ -1568,9 +1678,6 @@ class _StatusBadge extends StatelessWidget {
         color: const Color(0x99101A24),
         borderRadius: BorderRadius.circular(24),
         border: Border.all(color: const Color(0x3300FFCC), width: 1),
-        boxShadow: const [
-          BoxShadow(color: Color(0x1A00FFCC), blurRadius: 22, spreadRadius: 1),
-        ],
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
