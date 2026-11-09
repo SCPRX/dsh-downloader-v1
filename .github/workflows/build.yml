@@ -19,12 +19,15 @@ jobs:
         mkdir -p build_app/assets
         cp logo.png build_app/assets/logo.png
         cd build_app
-        # 用 logo.png 生成桌面图标（沙箱里通常自带 ImageMagick，没有就跳过）
+        # 桌面图标：把 logo 放到深色底上（和启动页观感一致），再切各尺寸
         if command -v convert >/dev/null 2>&1; then
+          convert -size 1024x1024 xc:'#03060A' \
+            \( assets/logo.png -resize 640x640 \) -gravity center -composite \
+            -alpha off /tmp/icon_master.png
           for spec in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
             d=${spec%%:*}; sz=${spec##*:}
             mkdir -p android/app/src/main/res/mipmap-$d
-            convert assets/logo.png -resize ${sz}x${sz} android/app/src/main/res/mipmap-$d/ic_launcher.png
+            convert /tmp/icon_master.png -resize ${sz}x${sz} android/app/src/main/res/mipmap-$d/ic_launcher.png
           done
         fi
         # 不再覆盖 Flutter 生成的 AndroidManifest（覆盖会丢 flutterEmbedding 和启动 Activity，
@@ -35,7 +38,7 @@ jobs:
         s = open(p, encoding="utf-8").read()
         s = s.replace('<application',
                       '<application\n        android:usesCleartextTraffic="true"\n        android:largeHeap="true"', 1)
-        s = re.sub(r'android:label="[^"]*"', 'android:label="原生DSH"', s, count=1)
+        s = re.sub(r'android:label="[^"]*"', 'android:label="落锤"', s, count=1)
         perms = ('    <uses-permission android:name="android.permission.INTERNET" />\n'
                  '    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />\n'
                  '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n'
