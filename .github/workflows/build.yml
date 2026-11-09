@@ -16,8 +16,8 @@ jobs:
         cp logo.png assets/logo.png
         cp MainActivity.kt android/app/src/main/kotlin/com/dsh/dshapp/MainActivity.kt
         for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
-          test -f "ic_launcher-$d.png" || { echo "missing ic_launcher-$d.png"; exit 1; }
-          cp "ic_launcher-$d.png" "android/app/src/main/res/mipmap-$d/ic_launcher.png"
+          test -f "icons/ic_launcher-$d.png" || { echo "missing icons/ic_launcher-$d.png"; exit 1; }
+          cp "icons/ic_launcher-$d.png" "android/app/src/main/res/mipmap-$d/ic_launcher.png"
         done
         python3 - <<'PY'
         import re
