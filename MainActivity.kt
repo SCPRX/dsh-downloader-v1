@@ -3,6 +3,8 @@ package com.dsh.dshapp
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.StatFs
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -25,27 +27,27 @@ class MainActivity : FlutterActivity() {
         private const val CHANNEL = "com.dsh.dshapp/status"
         private const val BASE_PORT = 3090
         private const val MAX_TRIES = 20
+
+        @Volatile var channel: MethodChannel? = null
+        @Volatile var webServer: Process? = null
+        @Volatile var sdkProc: Process? = null
+        @Volatile var sdkReaderRunning = false
+        @Volatile var starting = false
+        @Volatile var engineUrl = ""
+        @Volatile var activePort = BASE_PORT
+        val lastLog = ArrayDeque<String>()
+        private val mainHandler = Handler(Looper.getMainLooper())
     }
-
-    private lateinit var channel: MethodChannel
-
-    @Volatile private var webServer: Process? = null
-
-    @Volatile private var sdkProc: Process? = null
-
-    @Volatile private var starting = false
-    @Volatile private var engineUrl: String = ""
-
-    @Volatile private var activePort: Int = BASE_PORT
-    private val lastLog = ArrayDeque<String>()
 
     private fun remember(line: String) {
         if (line.isBlank()) return
-        lastLog.addLast(line)
-        while (lastLog.size > 8) lastLog.removeFirst()
+        synchronized(lastLog) {
+            lastLog.addLast(line)
+            while (lastLog.size > 8) lastLog.removeFirst()
+        }
     }
 
-    private fun lastLogText(): String = lastLog.joinToString(" ｜ ")
+    private fun lastLogText(): String = synchronized(lastLog) { lastLog.joinToString(" ｜ ") }
 
     private val envDir: File get() = File(filesDir, "dsh-env")
     private val prootBin: File get() = File(envDir, "proot")
@@ -78,8 +80,9 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
-        channel.setMethodCallHandler { call, result ->
+        val ch = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
+        channel = ch
+        ch.setMethodCallHandler { call, result ->
             when (call.method) {
                 "checkEnv" -> result.success(isEnvReady())
                 "envZipPath" -> result.success(File(cacheDir, "env_data.zip").absolutePath)
@@ -121,7 +124,11 @@ class MainActivity : FlutterActivity() {
                     startWeb()
                     result.success(true)
                 }
-                "engineAlive" -> result.success(sdkProc?.isAlive == true)
+                "engineAlive" -> result.success(sdkProc?.isAlive == true && sdkReaderRunning)
+                "killEngine" -> {
+                    killSdk()
+                    result.success(true)
+                }
                 "openEngine" -> {
                     val url = call.argument<String>("url") ?: "http://127.0.0.1:$activePort"
                     openEngine(url)
@@ -137,6 +144,13 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+    }
+
+    override fun onDestroy() {
+        if (channel === MainActivity.channel) {
+            channel = null
+        }
+        super.onDestroy()
     }
 
     private fun engineLogFile(): File = File(filesDir, "engine.log")
@@ -163,21 +177,33 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun status(msg: String) {
-        runOnUiThread {
-            if (this::channel.isInitialized) channel.invokeMethod("updateStatus", msg)
+        val ch = channel ?: return
+        mainHandler.post {
+            try {
+                ch.invokeMethod("updateStatus", msg)
+            } catch (_: Throwable) {
+            }
         }
     }
 
     private fun fail(msg: String) {
         status(msg)
-        runOnUiThread {
-            if (this::channel.isInitialized) channel.invokeMethod("failed", msg)
+        val ch = channel ?: return
+        mainHandler.post {
+            try {
+                ch.invokeMethod("failed", msg)
+            } catch (_: Throwable) {
+            }
         }
     }
 
     private fun notifyEvent(method: String, arg: Any?) {
-        runOnUiThread {
-            if (this::channel.isInitialized) channel.invokeMethod(method, arg)
+        val ch = channel ?: return
+        mainHandler.post {
+            try {
+                ch.invokeMethod(method, arg)
+            } catch (_: Throwable) {
+            }
         }
     }
 
@@ -464,6 +490,7 @@ class MainActivity : FlutterActivity() {
                 Thread {
                     try {
                         BufferedReader(InputStreamReader(p.inputStream)).use { r ->
+                            sdkReaderRunning = true
                             var line = r.readLine()
                             while (line != null) {
                                 remember(line)
@@ -473,6 +500,8 @@ class MainActivity : FlutterActivity() {
                             }
                         }
                     } catch (_: Throwable) {
+                    } finally {
+                        sdkReaderRunning = false
                     }
                 }.start()
 
@@ -520,6 +549,7 @@ class MainActivity : FlutterActivity() {
         } catch (_: Throwable) {
         }
         sdkProc = null
+        sdkReaderRunning = false
     }
 
     private fun startWeb() {
