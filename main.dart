@@ -82,6 +82,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   DateTime _lastProgressPaint = DateTime.fromMillisecondsSinceEpoch(0);
   Timer? _keepAliveTimer;
   Timer? _startupTimer;
+  String _keepAliveText = "正在准备环境，请勿清理后台…";
 
   static const String _libsUrl =
       'https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/runtime-libs.zip';
@@ -254,9 +255,6 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
 
   Future<void> _afterEnvReady() async {
     if (!mounted) return;
-    // 解压已经结束，前台服务可以撤了
-    _stopKeepAliveLoop();
-    unawaited(_keepAlive(false));
     try {
       await _ensureLibs();
     } catch (_) {
@@ -359,11 +357,12 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
         continue;
       }
     }
+    _startKeepAliveLoop(text: "正在解压环境，请勿清理后台…");
     setState(() {
       _progress = 1.0;
       _status = "下载完成，正在解压(耗时较长)...";
     });
-    // 前台服务先留着：解压阶段也需要保活，等环境就绪后再撤
+    // 前台服务继续挂着：解压、启动引擎都需要保活
     await _ch.invokeMethod('startExtract', {'path': zipPath});
   }
 
@@ -393,8 +392,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
           : "首次启动，正在下载核心环境(约 198MB)...";
     });
 
-    unawaited(_keepAlive(true));
-    _startKeepAliveLoop();
+    _startKeepAliveLoop(text: "正在下载环境，请勿清理后台…");
 
     final runId = _runId;
     _downloading = true;
@@ -694,16 +692,21 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     );
   }
 
-  // ---------------- 前台服务（下载/解压时保活） ----------------
+  // ---------------- 前台服务（全程保活） ----------------
 
   Future<void> _keepAlive(bool on) async {
     try {
-      await _ch.invokeMethod('keepAlive', {'on': on});
+      await _ch.invokeMethod('keepAlive', {
+        'on': on,
+        'text': _keepAliveText,
+      });
     } catch (_) {}
   }
 
-  void _startKeepAliveLoop() {
+  void _startKeepAliveLoop({String? text}) {
+    if (text != null) _keepAliveText = text;
     _keepAliveTimer?.cancel();
+    unawaited(_keepAlive(true));
     _keepAliveTimer = Timer.periodic(const Duration(seconds: 25), (_) {
       unawaited(_keepAlive(true));
     });
@@ -722,6 +725,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       _failed = false;
       _status = "正在启动引擎…";
     });
+    _startKeepAliveLoop(text: "引擎启动中，请稍候…");
     // 引擎首次启动要加载很多模块，可能比较久，这里显示已等待秒数
     var secs = 0;
     _startupTimer?.cancel();
@@ -747,6 +751,8 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       if (res == null) throw '引擎没有响应';
       _rpcReady = true;
       _startupTimer?.cancel();
+      // 引擎跑起来了：通知改成「运行中」，前台服务继续养着
+      _startKeepAliveLoop(text: "原生 DSH 运行中 · 可切到后台");
       setState(() {
         _phase = "chat";
         _failed = false;
@@ -1078,21 +1084,20 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                             ],
                           ),
                         ),
-                        const SizedBox(height: 28),
-                        _CenterText(_status,
-                            style: const TextStyle(
-                              fontSize: 14.0,
-                              color: Color(0xFF00FFCC),
-                              fontWeight: FontWeight.bold,
-                            )),
+                        const SizedBox(height: 30),
+                        _StatusBadge(_status),
                         if (_downloading) ...[
-                          const SizedBox(height: 10),
+                          const SizedBox(height: 14),
                           _CenterText(
                               _curName.isEmpty
                                   ? ""
-                                  : "$_curName · ${_speed.isEmpty ? "连接中..." : _speed}",
+                                  : "$_curName · ${_speed.isEmpty ? "连接中…" : _speed}",
                               style: const TextStyle(
-                                  color: Colors.white60, fontSize: 13)),
+                                color: Color(0x99FFFFFF),
+                                fontSize: 12.5,
+                                height: 1.4,
+                                letterSpacing: 0.3,
+                              )),
                         ],
                         if (_failed) ...[
                           const SizedBox(height: 14),
@@ -1545,6 +1550,54 @@ class _LeftText extends StatelessWidget {
     return CustomPaint(
       size: Size(tp.width, tp.height),
       painter: _TextDrawPainter(text, style),
+    );
+  }
+}
+
+/// 状态胶囊：带小转圈、半透明底和青色描边，比裸文字好看
+class _StatusBadge extends StatelessWidget {
+  final String text;
+  const _StatusBadge(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 320),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+      decoration: BoxDecoration(
+        color: const Color(0x99101A24),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0x3300FFCC), width: 1),
+        boxShadow: const [
+          BoxShadow(color: Color(0x1A00FFCC), blurRadius: 22, spreadRadius: 1),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(
+            width: 13,
+            height: 13,
+            child: CircularProgressIndicator(
+              strokeWidth: 1.8,
+              color: Color(0xFF00FFCC),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Flexible(
+            child: _CenterText(
+              text,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 13.2,
+                height: 1.45,
+                letterSpacing: 0.2,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
