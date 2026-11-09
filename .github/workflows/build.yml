@@ -9,51 +9,35 @@ jobs:
       with: { java-version: '17', distribution: 'temurin' }
     - uses: subosito/flutter-action@v2
       with: { channel: 'stable' }
-    - name: Compile
+    - name: Build
       run: |
-        flutter create --platforms android --project-name dshapp --org com.dsh build_app
-        cp main.dart build_app/lib/main.dart
-        cp pubspec.yaml build_app/pubspec.yaml
-        mkdir -p build_app/android/app/src/main/kotlin/com/dsh/dshapp
-        cp MainActivity.kt build_app/android/app/src/main/kotlin/com/dsh/dshapp/MainActivity.kt
-        mkdir -p build_app/assets
-        cp logo.png build_app/assets/logo.png
-        cd build_app
-        if [ -f ../icon.png ] && command -v convert >/dev/null 2>&1; then
-          for spec in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
-            d=${spec%%:*}; sz=${spec##*:}
-            mkdir -p android/app/src/main/res/mipmap-$d
-            convert ../icon.png -resize ${sz}x${sz} android/app/src/main/res/mipmap-$d/ic_launcher.png
-          done
-        fi
+        mkdir -p lib assets
+        cp main.dart lib/main.dart
+        cp logo.png assets/logo.png
+        cp MainActivity.kt android/app/src/main/kotlin/com/dsh/dshapp/MainActivity.kt
+        for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+          test -f "ic_launcher-$d.png" || { echo "missing ic_launcher-$d.png"; exit 1; }
+          cp "ic_launcher-$d.png" "android/app/src/main/res/mipmap-$d/ic_launcher.png"
+        done
         python3 - <<'PY'
         import re
-        p = "android/app/src/main/AndroidManifest.xml"
-        s = open(p, encoding="utf-8").read()
-        s = s.replace('<application',
-                      '<application\n        android:usesCleartextTraffic="true"\n        android:largeHeap="true"', 1)
-        s = re.sub(r'android:label="[^"]*"', 'android:label="落锤"', s, count=1)
-        perms = ('    <uses-permission android:name="android.permission.INTERNET" />\n'
-                 '    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />\n'
-                 '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n'
-                 '    <uses-permission android:name="android.permission.WAKE_LOCK" />\n'
-                 '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />\n'
-                 '    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n')
-        s = s.replace('<application', perms + '    <application', 1)
-        svc = ('        <service\n'
-               '            android:name="com.dsh.dshapp.DownloadService"\n'
-               '            android:exported="false"\n'
-               '            android:foregroundServiceType="dataSync" />\n')
-        s = s.replace('</application>', svc + '    </application>', 1)
-        open(p, "w", encoding="utf-8").write(s)
+        from pathlib import Path
+        p = Path("android/gradle/wrapper/gradle-wrapper.properties")
+        s = p.read_text()
+        s = re.sub(r"https://github\.com/gradle/gradle-distributions/releases/download/v[0-9.]+/", "https://services.gradle.org/distributions/", s)
+        p.write_text(s)
+        print(s)
         PY
-        python3 -c "import xml.dom.minidom; xml.dom.minidom.parse('android/app/src/main/AndroidManifest.xml'); print('manifest ok')"
-        sed -i -E 's/targetSdk *= *flutter\.targetSdkVersion/targetSdk = 28/' android/app/build.gradle.kts
-        grep -q "targetSdk = 28" android/app/build.gradle.kts || { echo "targetSdk patch failed"; exit 1; }
-        printf '\nandroid {\n    lint {\n        abortOnError = false\n        checkReleaseBuilds = false\n    }\n}\n' >> android/app/build.gradle.kts
         flutter pub get
-        flutter build apk --release --target-platform android-arm64
+        n=0
+        until [ $n -ge 3 ]; do
+          flutter build apk --release --target-platform android-arm64 && break
+          n=$((n+1))
+          echo "build failed, retry $n"
+          sleep 15
+        done
+        test -f build/app/outputs/flutter-apk/app-release.apk
     - uses: actions/upload-artifact@v4
       with:
         name: Final-APK
-        path: build_app/build/app/outputs/flutter-apk/app-release.apk
+        path: build/app/outputs/flutter-apk/app-release.apk
