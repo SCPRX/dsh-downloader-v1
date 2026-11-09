@@ -53,9 +53,13 @@ class MainActivity : FlutterActivity() {
     private fun lastLogText(): String = lastLog.joinToString(" ｜ ")
 
     private val envDir: File get() = File(filesDir, "dsh-env")
-    private val nodeBin: File get() = File(envDir, "node")
-    // 装好版 harness 的入口（编译过的 JS，不是源码里的 bin.ts）
-    private val cliEntry: File get() = File(envDir, "node_modules/@deepseek-ai/dsh/lib/bin.js")
+    // proot 方案：Linux 版 node + harness 跑在 guest 的 Linux 根文件系统里
+    private val prootBin: File get() = File(envDir, "proot")
+    private val loaderBin: File get() = File(envDir, "loader")
+    private val rootfsDir: File get() = File(envDir, "rootfs")
+    private val guestNode: File get() = File(rootfsDir, "opt/node/bin/node")
+    private val guestHarness: File
+        get() = File(rootfsDir, "opt/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js")
     private val workDir: File get() = envDir
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -111,6 +115,7 @@ class MainActivity : FlutterActivity() {
                     repairLinks()
                     result.success(true)
                 }
+                "readEngineLog" -> result.success(readEngineLog())
                 "startSdk" -> {
                     val apiKey = call.argument<String>("apiKey") ?: ""
                     startSdk(apiKey)
@@ -137,6 +142,31 @@ class MainActivity : FlutterActivity() {
                 }
                 else -> result.notImplemented()
             }
+        }
+    }
+
+    // ---------- 引擎日志（写文件，出问题能翻） ----------
+
+    private fun engineLogFile(): File = File(filesDir, "engine.log")
+
+    @Synchronized
+    private fun logEngine(line: String) {
+        try {
+            val f = engineLogFile()
+            if (f.length() > 2 * 1024 * 1024) f.delete()
+            f.appendText(line + "\n")
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun readEngineLog(): String {
+        return try {
+            val f = engineLogFile()
+            if (!f.exists()) return "(还没有日志)"
+            val text = f.readText()
+            if (text.length <= 12000) text else text.substring(text.length - 12000)
+        } catch (t: Throwable) {
+            "读取日志失败: ${t.message}"
         }
     }
 
@@ -191,7 +221,8 @@ class MainActivity : FlutterActivity() {
 
     // ---------- 环境检查 ----------
 
-    private fun isEnvReady(): Boolean = nodeBin.exists() && cliEntry.exists()
+    private fun isEnvReady(): Boolean =
+        prootBin.exists() && loaderBin.exists() && guestNode.exists() && guestHarness.exists()
 
     // ---------- 解压 ----------
 
@@ -216,8 +247,7 @@ class MainActivity : FlutterActivity() {
                 var count = 0
                 val buf = ByteArray(64 * 1024)
                 val root = envDir.canonicalPath
-                // zip 里的符号链接（pnpm 的 node_modules 全靠它）解压后会变成小文本文件，
-                // 这里先记下来，解压完再按内容恢复成真正的符号链接
+                // zip 里的符号链接解压后会变成小文本文件，这里先记下来，解压完再恢复
                 val linkCandidates = ArrayList<Pair<String, String>>()
                 val linkLike =
                     Regex("^[.]{0,2}/?[A-Za-z0-9@._+/-]+$")
@@ -255,21 +285,58 @@ class MainActivity : FlutterActivity() {
                                 }
                             }
                             count++
-                            if (count % 300 == 0) status("正在解压环境… 已解压 $count 个文件")
+                            if (count % 500 == 0) status("正在解压环境… 已解压 $count 个文件")
                         }
                     }
                 }
-                nodeBin.setExecutable(true, false)
 
-                // 第二步：把符号链接恢复出来（node 找模块全靠它）
+                // 第二步：恢复可执行位（Java 解压会丢权限）
+                var execs = 0
+                val execList = File(envDir, "meta/exec.list")
+                if (execList.exists()) {
+                    execList.forEachLine { rel ->
+                        if (rel.isNotBlank()) {
+                            try {
+                                File(envDir, rel).setExecutable(true, false)
+                                execs++
+                            } catch (_: Throwable) {
+                            }
+                        }
+                    }
+                }
+                status("解压完成，恢复 $execs 个可执行权限，正在恢复链接…")
+
+                // 第三步：恢复符号链接（rootfs 里大量链接，缺了系统命令都用不了）
                 var links = 0
                 if (android.os.Build.VERSION.SDK_INT >= 26) {
+                    val linkList = File(envDir, "meta/links.txt")
+                    if (linkList.exists()) {
+                        linkList.forEachLine { line ->
+                            val tab = line.indexOf('\t')
+                            if (tab > 0) {
+                                val rel = line.substring(0, tab)
+                                val target = line.substring(tab + 1)
+                                try {
+                                    val f = File(envDir, rel)
+                                    if (f.exists()) f.delete()
+                                    f.parentFile?.mkdirs()
+                                    java.nio.file.Files.createSymbolicLink(
+                                        f.toPath(),
+                                        java.nio.file.Paths.get(target)
+                                    )
+                                    links++
+                                } catch (_: Throwable) {
+                                }
+                            }
+                        }
+                    }
+                    // 旧版链接候选（兼容）
                     for ((path, target) in linkCandidates) {
                         try {
                             val f = File(path)
+                            if (f.exists()) continue
                             val t = File(f.parentFile, target)
                             if (!t.exists()) continue
-                            f.delete()
                             java.nio.file.Files.createSymbolicLink(
                                 f.toPath(),
                                 java.nio.file.Paths.get(target)
@@ -279,9 +346,12 @@ class MainActivity : FlutterActivity() {
                         }
                     }
                 }
+                prootBin.setExecutable(true, false)
+                loaderBin.setExecutable(true, false)
+                File(envDir, "loader32").setExecutable(true, false)
 
                 if (!isEnvReady()) {
-                    fail("解压完成但在包里找不到 node 或 bin.js")
+                    fail("解压完成但找不到 proot / node / 引擎入口")
                     return@Thread
                 }
                 status("解压完成，共 $count 个文件，恢复 $links 个链接")
@@ -298,7 +368,7 @@ class MainActivity : FlutterActivity() {
         }.start()
     }
 
-    // ---------- 安装 node 缺的系统库（libz/libssl/libicu 等） ----------
+    // ---------- 安装 node 缺的系统库（旧方案兼容，新运行时用不到） ----------
 
     private fun installLibs(zipFile: File) {
         Thread {
@@ -342,7 +412,7 @@ class MainActivity : FlutterActivity() {
         }.start()
     }
 
-    // ---------- 修复 node_modules 里的符号链接（老环境重装也能修好） ----------
+    // ---------- 修复符号链接（旧方案兼容） ----------
 
     private fun repairLinks() {
         Thread {
@@ -388,7 +458,7 @@ class MainActivity : FlutterActivity() {
         }.start()
     }
 
-    // ---------- 原生模式：dsh --profile sdk（stdio JSON-RPC） ----------
+    // ---------- 原生模式：proot 里跑 dsh --profile sdk（stdio JSON-RPC） ----------
 
     private fun startSdk(apiKey: String) {
         if (!isEnvReady()) {
@@ -402,12 +472,16 @@ class MainActivity : FlutterActivity() {
             try {
                 status("正在启动引擎...")
                 val cmd = "cd '${workDir.absolutePath}' && " +
-                    "export LD_LIBRARY_PATH='${envDir.absolutePath}' && " +
-                    "export HOME='${filesDir.absolutePath}' && " +
-                    "export DSH_HOME='${filesDir.absolutePath}/.dsh' && " +
-                    "export OPENSSL_CONF=/dev/null && " +
-                    "export DEEPSEEK_API_KEY='$apiKey' && " +
-                    "exec '${nodeBin.absolutePath}' --expose-internals node_modules/@deepseek-ai/dsh/lib/bin.js --profile sdk"
+                    "export LD_LIBRARY_PATH='${envDir.absolutePath}/lib' && " +
+                    "export PROOT_LOADER='${envDir.absolutePath}/loader' && " +
+                    "export PROOT_LOADER_32='${envDir.absolutePath}/loader32' && " +
+                    "export PROOT_NO_SECCOMP=1 && " +
+                    "exec '${prootBin.absolutePath}' -0 -r '${rootfsDir.absolutePath}' " +
+                    "-b /dev -b /proc -b /sys -w /root " +
+                    "/usr/bin/env HOME=/root DSH_HOME=/root/.dsh " +
+                    "DEEPSEEK_API_KEY='$apiKey' " +
+                    "/opt/node/bin/node --expose-internals " +
+                    "/opt/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js --profile sdk"
                 val p = ProcessBuilder("/system/bin/sh", "-c", cmd)
                     .directory(workDir)
                     .redirectErrorStream(false)
@@ -421,6 +495,7 @@ class MainActivity : FlutterActivity() {
                             var line = r.readLine()
                             while (line != null) {
                                 remember(line)
+                                logEngine("[out] " + line)
                                 notifyEvent("rpcLine", line)
                                 line = r.readLine()
                             }
@@ -437,6 +512,7 @@ class MainActivity : FlutterActivity() {
                             while (line != null) {
                                 val s = line.trim()
                                 remember(s)
+                                logEngine("[err] " + s)
                                 if (s.isNotEmpty()) status("底层: $s")
                                 line = r.readLine()
                             }
@@ -475,7 +551,7 @@ class MainActivity : FlutterActivity() {
         sdkProc = null
     }
 
-    // ---------- 网页兜底：dsh web + 探测端口 ----------
+    // ---------- 网页兜底：proot 里跑 dsh web + 探测端口 ----------
 
     private fun startWeb() {
         if (!isEnvReady()) {
@@ -496,11 +572,15 @@ class MainActivity : FlutterActivity() {
                 val port = findFreePort()
                 activePort = port
                 val cmd = "cd '${workDir.absolutePath}' && " +
-                    "export LD_LIBRARY_PATH='${envDir.absolutePath}' && " +
-                    "export HOME='${filesDir.absolutePath}' && " +
-                    "export DSH_HOME='${filesDir.absolutePath}/.dsh' && " +
-                    "export OPENSSL_CONF=/dev/null && " +
-                    "exec '${nodeBin.absolutePath}' --expose-internals node_modules/@deepseek-ai/dsh/lib/bin.js web --no-open --port $port"
+                    "export LD_LIBRARY_PATH='${envDir.absolutePath}/lib' && " +
+                    "export PROOT_LOADER='${envDir.absolutePath}/loader' && " +
+                    "export PROOT_LOADER_32='${envDir.absolutePath}/loader32' && " +
+                    "export PROOT_NO_SECCOMP=1 && " +
+                    "exec '${prootBin.absolutePath}' -0 -r '${rootfsDir.absolutePath}' " +
+                    "-b /dev -b /proc -b /sys -w /root " +
+                    "/usr/bin/env HOME=/root DSH_HOME=/root/.dsh " +
+                    "/opt/node/bin/node --expose-internals " +
+                    "/opt/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js web --no-open --port $port"
                 val p = ProcessBuilder("/system/bin/sh", "-c", cmd)
                     .directory(workDir)
                     .redirectErrorStream(true)
@@ -532,6 +612,7 @@ class MainActivity : FlutterActivity() {
                     while (line != null) {
                         val s = line.trim()
                         remember(s)
+                        logEngine("[web] " + s)
                         val m = Regex("https?://(?:127\\.0\\.0\\.1|localhost|0\\.0\\.0\\.0):\\d+[^\\s\"'<>]*").find(s)
                         if (m != null) {
                             engineUrl = m.value
