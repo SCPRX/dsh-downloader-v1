@@ -721,7 +721,7 @@ class DownloadService : android.app.Service() {
     override fun onBind(intent: Intent?): android.os.IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val title = "原生 DSH"
+        val title = "落锤"
         val text = currentText
         val icon = android.R.drawable.stat_sys_download
         // 点通知回到 App
