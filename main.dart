@@ -221,11 +221,10 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       await _loadMsgs();
       if (_apiKey.isEmpty) {
         setState(() {
-          _phase = "setup";
+          _phase = "chat";
           _failed = false;
-          _status = "需要填一次 API Key";
+          _status = "还没配置 API Key，点右上角⚙设置填写";
         });
-        return;
       }
       final bool installed = await _ch.invokeMethod<bool>('checkEnv') ?? false;
       if (installed) {
@@ -306,9 +305,9 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     await _applyHarnessPatches();
     if (_apiKey.isEmpty) {
       setState(() {
-        _phase = "setup";
+        _phase = "chat";
         _failed = false;
-        _status = "需要填一次 API Key";
+        _status = "还没配置 API Key，点右上角⚙设置填写";
       });
       return;
     }
@@ -1024,6 +1023,11 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       _model = model;
     });
     unawaited(_saveSettings());
+    setState(() {
+      _phase = "chat";
+      _failed = false;
+      _status = "正在启动引擎…";
+    });
     unawaited(_startEngine());
   }
 
@@ -1362,6 +1366,51 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                 padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
                 itemCount: _msgs.length + (_streamText.isNotEmpty ? 1 : 0),
                 itemBuilder: (ctx, i) {
+                  if (_msgs.isEmpty && _streamText.isEmpty) {
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 80),
+                      child: Column(
+                        children: [
+                          _CenterText("落锤",
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 22,
+                                  letterSpacing: 4,
+                                  fontWeight: FontWeight.w600)),
+                          const SizedBox(height: 10),
+                          _CenterText("直接发消息开始，Key 在右上角设置里改",
+                              style: const TextStyle(
+                                  color: Color(0x88FFFFFF), fontSize: 12.5)),
+                          const SizedBox(height: 26),
+                          Wrap(
+                            alignment: WrapAlignment.center,
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              for (final s in const [
+                                "帮我写段代码",
+                                "解释一下这个概念",
+                                "翻译下面这段话",
+                                "看看当前目录有什么"
+                              ])
+                                ActionChip(
+                                  label: Text(s,
+                                      style: const TextStyle(
+                                          color: Color(0xFF00FFCC),
+                                          fontSize: 12)),
+                                  backgroundColor: const Color(0xFF10202A),
+                                  side: const BorderSide(
+                                      color: Color(0x3300FFCC)),
+                                  onPressed: () {
+                                    _inputCtrl.text = s;
+                                  },
+                                ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    );
+                  }
                   final isStream = i == _msgs.length;
                   final text = isStream ? _streamText : _msgs[i].text;
                   final mine = isStream ? false : _msgs[i].mine;
