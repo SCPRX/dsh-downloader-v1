@@ -1,3 +1,6 @@
+import java.net.URI
+import java.net.URLConnection
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
@@ -68,7 +71,7 @@ val bundleRuntime = tasks.register("bundleRuntime") {
         for (u in runtimeMirrors) {
             try {
                 println("fetch runtime: " + u)
-                val conn = java.net.URI(u).toURL().openConnection()
+                val conn: URLConnection = URI(u).toURL().openConnection()
                 conn.connectTimeout = 30000
                 conn.readTimeout = 300000
                 conn.getInputStream().use { input ->
