@@ -1398,6 +1398,24 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    if (_rpcReady)
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton.icon(
+                          onPressed: () {
+                            setState(() {
+                              _phase = "chat";
+                              _failed = false;
+                              _status = "";
+                            });
+                          },
+                          icon: const Icon(Icons.arrow_back,
+                              size: 18, color: Color(0xCC00FFCC)),
+                          label: const Text("返回聊天",
+                              style: TextStyle(
+                                  color: Color(0xCC00FFCC), fontSize: 13)),
+                        ),
+                      ),
                     const Icon(Icons.vpn_key_outlined,
                         size: 44, color: Color(0xFF00FFCC)),
                     const SizedBox(height: 20),
