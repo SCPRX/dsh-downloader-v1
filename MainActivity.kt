@@ -411,7 +411,7 @@ class MainActivity : FlutterActivity() {
 
                 status("正在解压环境(耗时较长)...")
                 var count = 0
-                val buf = ByteArray(64 * 1024)
+                val buf = ByteArray(512 * 1024)
                 val root = envDir.canonicalPath
                 val linkCandidates = ArrayList<Pair<String, String>>()
                 val linkLike = Regex("^[.]{0,2}/?[A-Za-z0-9@._+/-]+$")

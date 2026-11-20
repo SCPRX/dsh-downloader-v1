@@ -42,7 +42,11 @@ class ChatSession {
   final String id;
   String title;
   final List<ChatMsg> msgs;
-  ChatSession(this.id, this.title, this.msgs);
+  bool pinned;
+  ChatSession(this.id, this.title, this.msgs, {this.pinned = false});
+
+  int get lastTs =>
+      msgs.isEmpty ? 0 : msgs.map((m) => m.ts).reduce((a, b) => a > b ? a : b);
 }
 
 class ChatMsg {
@@ -432,6 +436,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
               (item['id'] ?? _newId()).toString(),
               (item['title'] ?? "新对话").toString(),
               msgs,
+              pinned: item['p'] == true,
             ));
           }
         }
@@ -454,6 +459,10 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     if (_sessions.isEmpty) {
       _sessions.add(ChatSession(_newId(), "新对话", <ChatMsg>[]));
     }
+    _sessions.sort((a, b) {
+      if (a.pinned != b.pinned) return a.pinned ? -1 : 1;
+      return b.lastTs.compareTo(a.lastTs);
+    });
     ChatSession pick = _sessions.first;
     if (_lastSessionId.isNotEmpty) {
       for (final s in _sessions) {
@@ -477,6 +486,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
           {
             'id': s.id,
             'title': s.title,
+            'p': s.pinned,
             'msgs': [
               for (final m in s.msgs)
                 {'t': m.text, 'm': m.mine, 'k': m.kind, 'ts': m.ts}
@@ -1268,10 +1278,11 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
 
   void _scrollToEnd() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollCtrl.hasClients) {
-        _scrollCtrl.animateTo(_scrollCtrl.position.maxScrollExtent,
-            duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
-      }
+      if (!_scrollCtrl.hasClients) return;
+      final p = _scrollCtrl.position;
+      if (p.maxScrollExtent - p.pixels > 260) return;
+      _scrollCtrl.animateTo(p.maxScrollExtent,
+          duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
     });
   }
 
@@ -2411,7 +2422,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     );
   }
 
-  void _messageActions(String text, bool isAi) {
+  void _messageActions(String text, bool isAi, int index) {
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: const Color(0xFF0D1620),
@@ -2428,6 +2439,37 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                 Navigator.pop(ctx);
               },
             ),
+            ListTile(
+              leading: const Icon(Icons.format_quote,
+                  size: 20, color: Colors.white70),
+              title: const Text("引用",
+                  style: TextStyle(color: Colors.white, fontSize: 14)),
+              onTap: () {
+                Navigator.pop(ctx);
+                _inputCtrl.text = "> ${text.length > 80 ? text.substring(0, 80) : text}\n";
+                _inputCtrl.selection = TextSelection.fromPosition(
+                    TextPosition(offset: _inputCtrl.text.length));
+              },
+            ),
+            if (!isAi)
+              ListTile(
+                leading: const Icon(Icons.edit_outlined,
+                    size: 20, color: Colors.white70),
+                title: const Text("编辑后重发",
+                    style: TextStyle(color: Colors.white, fontSize: 14)),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  setState(() {
+                    if (index >= 0 && index < _msgs.length) {
+                      _msgs.removeAt(index);
+                    }
+                    _inputCtrl.text = text;
+                    _inputCtrl.selection = TextSelection.fromPosition(
+                        TextPosition(offset: _inputCtrl.text.length));
+                  });
+                  _saveMsgs();
+                },
+              ),
             if (isAi)
               ListTile(
                 leading: const Icon(Icons.refresh,
@@ -2439,6 +2481,21 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                   _regenerate();
                 },
               ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline,
+                  size: 20, color: Color(0xFFFF8A80)),
+              title: const Text("删除这条",
+                  style: TextStyle(color: Color(0xFFFF8A80), fontSize: 14)),
+              onTap: () {
+                Navigator.pop(ctx);
+                setState(() {
+                  if (index >= 0 && index < _msgs.length) {
+                    _msgs.removeAt(index);
+                  }
+                });
+                _saveMsgs();
+              },
+            ),
           ],
         ),
       ),
@@ -2746,6 +2803,18 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            ListTile(
+              leading: Icon(s.pinned ? Icons.push_pin : Icons.push_pin_outlined,
+                  size: 20,
+                  color: s.pinned ? const Color(0xFF00FFCC) : Colors.white70),
+              title: Text(s.pinned ? "取消置顶" : "置顶",
+                  style: const TextStyle(color: Colors.white, fontSize: 14)),
+              onTap: () {
+                Navigator.pop(ctx);
+                setState(() => s.pinned = !s.pinned);
+                _saveSessions();
+              },
+            ),
             ListTile(
               leading: const Icon(Icons.edit_outlined,
                   size: 20, color: Colors.white70),
@@ -3119,8 +3188,8 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                         mine: mine,
                         kind: isStream ? 0 : _msgs[i].kind,
                         ts: isStream ? null : _msgs[i].ts,
-                            onLongPress: () =>
-                                _messageActions(text, !mine && !isStream),
+                            onLongPress: () => _messageActions(
+                                text, !mine && !isStream, isStream ? -1 : i),
                           ),
                           if (!isStream) _BubbleTime(ts: _msgs[i].ts),
                         ],
@@ -3216,13 +3285,21 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  IconButton(
-                    onPressed: _sending ? null : _send,
-                    icon: Icon(Icons.send,
-                        size: 26,
-                        color: _sending
-                            ? Colors.white24
-                            : const Color(0xFF00FFCC)),
+                  ValueListenableBuilder<TextEditingValue>(
+                    valueListenable: _inputCtrl,
+                    builder: (ctx, v, _) {
+                      final canSend = !_sending &&
+                          (v.text.trim().isNotEmpty ||
+                              _pendingImageB64.isNotEmpty);
+                      return IconButton(
+                        onPressed: canSend ? _send : null,
+                        icon: Icon(Icons.send,
+                            size: 26,
+                            color: canSend
+                                ? const Color(0xFF00FFCC)
+                                : Colors.white24),
+                      );
+                    },
                   ),
                 ],
               ),
