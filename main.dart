@@ -343,7 +343,30 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       } catch (_) {}
     }
     await _startEngine();
-  }  File get _settingsFile => File("$_appDir/native_chat_settings.json");
+  }
+
+  File get _settingsFile => File("$_appDir/native_chat_settings.json");
+
+  Future<void> _loadSettings() async {
+    try {
+      if (await _settingsFile.exists()) {
+        final m = jsonDecode(await _settingsFile.readAsString());
+        if (m is Map) {
+          _apiKey = (m['apiKey'] ?? "").toString();
+          _model = (m['model'] ?? "deepseek-flash").toString();
+        }
+      }
+    } catch (_) {}
+    _keyCtrl.text = _apiKey;
+    _modelCtrl.text = _model;
+  }
+
+  Future<void> _saveSettings() async {
+    try {
+      await _settingsFile.writeAsString(
+          jsonEncode({'apiKey': _apiKey, 'model': _model}));
+    } catch (_) {}
+  }
 
   File get _msgsFile => File("$_appDir/native_chat_messages.json");
 
