@@ -226,7 +226,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
 
       final bool installed = await _ch.invokeMethod<bool>('checkEnv') ?? false;
       if (installed) {
-        _afterEnvReady();
+        await _startWebDefault();
         return;
       }
       await _downloadEnv();
@@ -239,6 +239,19 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
         _status = "启动失败: $e";
       });
     }
+  }
+
+  Future<void> _startWebDefault() async {
+    if (!mounted) return;
+    if (_apiKey.isEmpty) {
+      setState(() {
+        _phase = "setup";
+        _failed = false;
+        _status = "需要填一次 API Key";
+      });
+      return;
+    }
+    await _switchToWeb();
   }
 
   Future<void> _afterEnvReady() async {
@@ -1026,7 +1039,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       _failed = false;
     });
     try {
-      await _ch.invokeMethod('startWeb');
+      await _ch.invokeMethod('startWeb', {'apiKey': _apiKey});
     } catch (e) {
       setState(() {
         _failed = true;
@@ -1612,6 +1625,15 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    _webButton(Icons.chat_bubble_outline, () async {
+                      setState(() {
+                        _web = null;
+                        _phase = "starting";
+                        _status = "正在启动原生界面…";
+                      });
+                      await _afterEnvReady();
+                    }),
+                    const SizedBox(width: 8),
                     _webButton(Icons.refresh, () => web.reload()),
                     const SizedBox(width: 8),
                     _webButton(Icons.arrow_back, () async {

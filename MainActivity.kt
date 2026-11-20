@@ -37,6 +37,7 @@ class MainActivity : FlutterActivity() {
         @Volatile var engineUrl = ""
         @Volatile var activePort = BASE_PORT
         val lastLog = ArrayDeque<String>()
+        val pendingRpc = ArrayList<String>()
         private val mainHandler = Handler(Looper.getMainLooper())
     }
 
@@ -122,7 +123,8 @@ class MainActivity : FlutterActivity() {
                     result.success(true)
                 }
                 "startWeb" -> {
-                    startWeb()
+                    val key = call.argument<String>("apiKey") ?: ""
+                    startWeb(key)
                     result.success(true)
                 }
                 "engineAlive" -> result.success(sdkProc?.isAlive == true && sdkReaderRunning)
@@ -497,6 +499,20 @@ class MainActivity : FlutterActivity() {
                 sdkProc = p
                 logEngine("[start] process launched")
 
+                synchronized(pendingRpc) {
+                    for (l in pendingRpc) {
+                        try {
+                            p.outputStream.write((l + "\n").toByteArray(Charsets.UTF_8))
+                        } catch (_: Throwable) {
+                        }
+                    }
+                    pendingRpc.clear()
+                }
+                try {
+                    p.outputStream.flush()
+                } catch (_: Throwable) {
+                }
+
                 Thread {
                     try {
                         BufferedReader(InputStreamReader(p.inputStream)).use { r ->
@@ -531,6 +547,17 @@ class MainActivity : FlutterActivity() {
                     }
                 }.start()
 
+                Thread {
+                    var waited = 0
+                    while (sdkProc === p && p.isAlive && waited < 900) {
+                        Thread.sleep(30000)
+                        waited += 30
+                        if (sdkProc === p && p.isAlive) {
+                            logEngine("[wait] alive ${waited}s, no rpc yet")
+                        }
+                    }
+                }.start()
+
                 val code = p.waitFor()
                 logEngine("[exit] code=" + code)
                 if (sdkProc === p) {
@@ -546,7 +573,11 @@ class MainActivity : FlutterActivity() {
     private fun rpcSend(line: String) {
         Thread {
             try {
-                val p = sdkProc ?: return@Thread
+                val p = sdkProc
+                if (p == null) {
+                    synchronized(pendingRpc) { pendingRpc.add(line) }
+                    return@Thread
+                }
                 val out = p.outputStream
                 out.write((line + "\n").toByteArray(Charsets.UTF_8))
                 out.flush()
@@ -563,9 +594,10 @@ class MainActivity : FlutterActivity() {
         sdkProc = null
         sdkReaderRunning = false
         engineReady = false
+        synchronized(pendingRpc) { pendingRpc.clear() }
     }
 
-    private fun startWeb() {
+    private fun startWeb(apiKey: String) {
         if (!isEnvReady()) {
             fail("环境还没装好")
             return
@@ -593,6 +625,7 @@ class MainActivity : FlutterActivity() {
                     "exec '${prootBin.absolutePath}' -0 -r '${rootfsDir.absolutePath}' " +
                     "-b /dev -b /proc -b /sys -w /root " +
                     "/usr/bin/env HOME=/root DSH_HOME=/root/.dsh " +
+                    "DEEPSEEK_API_KEY='$apiKey' " +
                     "/opt/node/bin/node --expose-internals " +
                     "/opt/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js web --no-open --port $port"
                 logEngine("[webcmd] " + cmd)
