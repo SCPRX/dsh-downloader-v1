@@ -92,6 +92,9 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   String _testResult = "";
   String _engineLog = "";
   bool _showKey = false;
+  double _textScale = 1.0;
+  String _balance = "";
+  bool _balanceLoading = false;
   String _nativeFailMsg = "";
 
   String _apiKey = "";
@@ -234,6 +237,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       _appDir = (await _ch.invokeMethod<String>('filesDirPath')) ?? "";
       await _loadSettings();
       await _loadSessions();
+      if (_apiKey.isNotEmpty) unawaited(_fetchBalance());
       if (_apiKey.isEmpty) {
         setState(() {
           _phase = "chat";
@@ -360,6 +364,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
         if (m is Map) {
           _apiKey = (m['apiKey'] ?? "").toString();
           _model = (m['model'] ?? "deepseek-flash").toString();
+          _textScale = (m['textScale'] as num?)?.toDouble() ?? 1.0;
         }
       }
     } catch (_) {}
@@ -369,8 +374,11 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
 
   Future<void> _saveSettings() async {
     try {
-      await _settingsFile.writeAsString(
-          jsonEncode({'apiKey': _apiKey, 'model': _model}));
+      await _settingsFile.writeAsString(jsonEncode({
+        'apiKey': _apiKey,
+        'model': _model,
+        'textScale': _textScale,
+      }));
     } catch (_) {}
   }
 
@@ -1242,17 +1250,23 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
+    final scaled = MediaQuery.of(context).copyWith(
+      textScaler: TextScaler.linear(_textScale),
+    );
     final web = _web;
-    if (web != null) return _buildWeb(web);
-
-    switch (_phase) {
-      case "chat":
-        return _buildChat();
-      case "setup":
-        return _buildSetup();
-      default:
-        return _buildChat();
+    late final Widget child;
+    if (web != null) {
+      child = _buildWeb(web);
+    } else {
+      switch (_phase) {
+        case "setup":
+          child = _buildSetup();
+          break;
+        default:
+          child = _buildChat();
+      }
     }
+    return MediaQuery(data: scaled, child: child);
   }
 
   Widget _buildSetup() {
@@ -1440,6 +1454,127 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                             ],
                           ),
                         ),
+                        sectionTitle("账户"),
+                        Container(
+                          padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0E141B),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: const Color(0x18FFFFFF)),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.account_balance_wallet_outlined,
+                                  size: 20, color: Colors.white54),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                  children: [
+                                    const Text("DeepSeek 余额",
+                                        style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 14)),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      _balanceLoading
+                                          ? "查询中…"
+                                          : (_balance.isEmpty
+                                              ? "点右侧刷新"
+                                              : _balance),
+                                      style: const TextStyle(
+                                          color: Colors.white54,
+                                          fontSize: 12),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              IconButton(
+                                tooltip: "刷新余额",
+                                onPressed:
+                                    _balanceLoading ? null : _fetchBalance,
+                                icon: _balanceLoading
+                                    ? const SizedBox(
+                                        width: 16,
+                                        height: 16,
+                                        child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: Color(0xFF00FFCC)))
+                                    : const Icon(Icons.refresh,
+                                        size: 18,
+                                        color: Color(0xCC00FFCC)),
+                              ),
+                            ],
+                          ),
+                        ),
+                        sectionTitle("显示"),
+                        Container(
+                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0E141B),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: const Color(0x18FFFFFF)),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text("字体大小",
+                                  style: TextStyle(
+                                      color: Colors.white, fontSize: 14)),
+                              const SizedBox(height: 10),
+                              Row(
+                                children: [
+                                  for (final item in const [
+                                    ["小", 0.9],
+                                    ["标准", 1.0],
+                                    ["大", 1.15],
+                                  ])
+                                    Padding(
+                                      padding: const EdgeInsets.only(right: 8),
+                                      child: ChoiceChip(
+                                        label: Text(
+                                            item[0] as String,
+                                            style: TextStyle(
+                                                fontSize: 12,
+                                                color: (_textScale ==
+                                                        (item[1] as double))
+                                                    ? const Color(0xFF03211D)
+                                                    : Colors.white70)),
+                                        selected:
+                                            _textScale == (item[1] as double),
+                                        selectedColor:
+                                            const Color(0xFF00FFCC),
+                                        backgroundColor:
+                                            const Color(0xFF15202B),
+                                        onSelected: (_) {
+                                          setState(() =>
+                                              _textScale = item[1] as double);
+                                          unawaited(_saveSettings());
+                                        },
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                        sectionTitle("用量"),
+                        Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0E141B),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: const Color(0x18FFFFFF)),
+                          ),
+                          child: Text(
+                            _usageSummary,
+                            style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 12.5,
+                                height: 1.5),
+                          ),
+                        ),
                         sectionTitle("会话"),
                         Container(
                           decoration: BoxDecoration(
@@ -1560,6 +1695,58 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
         ],
       ),
     );
+  }
+
+  Future<void> _fetchBalance() async {
+    final key = _keyCtrl.text.trim().isEmpty ? _apiKey : _keyCtrl.text.trim();
+    if (key.isEmpty) {
+      setState(() => _balance = "未配置 Key");
+      return;
+    }
+    setState(() => _balanceLoading = true);
+    try {
+      final resp = await http.get(
+        Uri.parse("https://api.deepseek.com/user/balance"),
+        headers: {"Authorization": "Bearer $key"},
+      ).timeout(const Duration(seconds: 15));
+      if (!mounted) return;
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        final infos = data is Map ? data['balance_infos'] : null;
+        if (infos is List && infos.isNotEmpty && infos.first is Map) {
+          final i = infos.first as Map;
+          final cur = (i['currency'] ?? "CNY").toString();
+          final total = (i['total_balance'] ?? "0").toString();
+          final granted = (i['granted_balance'] ?? "0").toString();
+          setState(() => _balance = "$cur $total（赠金 $granted）");
+        } else {
+          setState(() => _balance = "无余额信息");
+        }
+      } else if (resp.statusCode == 401 || resp.statusCode == 403) {
+        setState(() => _balance = "Key 无效");
+      } else {
+        setState(() => _balance = "HTTP ${resp.statusCode}");
+      }
+    } catch (e) {
+      if (mounted) setState(() => _balance = "查询失败");
+    } finally {
+      if (mounted) setState(() => _balanceLoading = false);
+    }
+  }
+
+  String get _usageSummary {
+    int userMsgs = 0, aiMsgs = 0, chars = 0;
+    for (final s in _sessions) {
+      for (final m in s.msgs) {
+        chars += m.text.length;
+        if (m.mine) {
+          userMsgs++;
+        } else if (m.kind == 0) {
+          aiMsgs++;
+        }
+      }
+    }
+    return "会话 ${_sessions.length} · 你 $userMsgs 条 · AI $aiMsgs 条 · 共 $chars 字";
   }
 
   Future<void> _testKey() async {
