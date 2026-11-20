@@ -87,6 +87,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   bool _testing = false;
   String _testResult = "";
   String _engineLog = "";
+  bool _showKey = false;
   String _nativeFailMsg = "";
 
   String _apiKey = "";
@@ -1139,7 +1140,9 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       default:
         return _buildChat();
     }
-  }  Widget _buildSetup() {
+  }
+
+  Widget _buildSetup() {
     final currentModel = _models.contains(_modelCtrl.text.trim())
         ? _modelCtrl.text.trim()
         : _models.first;
@@ -1148,6 +1151,12 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       borderRadius: radius,
       borderSide: BorderSide(color: Color(0x22FFFFFF)),
     );
+    Widget sectionTitle(String text) => Padding(
+          padding: const EdgeInsets.only(top: 18, bottom: 8),
+          child: Text(text,
+              style: const TextStyle(
+                  color: Color(0x88FFFFFF), fontSize: 12, letterSpacing: 1)),
+        );
     return Container(
       color: const Color(0xFF03060A),
       child: Stack(
@@ -1156,210 +1165,283 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
             child: CustomPaint(painter: StarryCloudPainter(_clouds, _stars)),
           ),
           SafeArea(
-            child: Center(
-              child: SingleChildScrollView(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    if (_rpcReady)
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: TextButton.icon(
-                          onPressed: () {
-                            setState(() {
-                              _phase = "chat";
-                              _failed = false;
-                              _status = "";
-                            });
-                          },
-                          icon: const Icon(Icons.arrow_back,
-                              size: 18, color: Color(0xCC00FFCC)),
-                          label: const Text("返回聊天",
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(6, 8, 16, 4),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        onPressed: () {
+                          setState(() {
+                            _phase = "chat";
+                            _failed = false;
+                            _status = "";
+                          });
+                        },
+                        icon: const Icon(Icons.arrow_back,
+                            size: 20, color: Colors.white70),
+                      ),
+                      const Text("设置",
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 17,
+                              fontWeight: FontWeight.w600)),
+                      const Spacer(),
+                      if (_rpcReady)
+                        const Row(children: [
+                          Icon(Icons.circle,
+                              size: 8, color: Color(0xFF00FFCC)),
+                          SizedBox(width: 4),
+                          Text("引擎运行中",
                               style: TextStyle(
-                                  color: Color(0xCC00FFCC), fontSize: 13)),
-                        ),
-                      ),
-                    const Icon(Icons.vpn_key_outlined,
-                        size: 44, color: Color(0xFF00FFCC)),
-                    const SizedBox(height: 20),
-                    _CenterText("第一次使用，需要填一下模型信息",
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 17,
-                            height: 1.5,
-                            fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 6),
-                    _CenterText("API Key 只保存在本机，不会上传",
-                        style: const TextStyle(
-                            color: Colors.white38, fontSize: 12, height: 1.5)),
-                    const SizedBox(height: 30),
-                    TextField(
-                      controller: _keyCtrl,
-                      obscureText: true,
-                      style: const TextStyle(color: Colors.white, fontSize: 14),
-                      decoration: const InputDecoration(
-                        labelText: "DeepSeek API Key",
-                        hintText: "sk-…",
-                        labelStyle:
-                            TextStyle(color: Color(0x99FFFFFF), fontSize: 13),
-                        hintStyle:
-                            TextStyle(color: Color(0x44FFFFFF), fontSize: 13),
-                        filled: true,
-                        fillColor: Color(0xFF0E141B),
-                        contentPadding:
-                            EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                        enabledBorder: fieldBorder,
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: radius,
-                          borderSide: BorderSide(color: Color(0x9900FFCC)),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF0E141B),
-                        borderRadius: radius,
-                        border: Border.all(color: const Color(0x22FFFFFF)),
-                      ),
-                      child: Row(
-                        children: [
-                          _LeftText("模型",
-                              style: const TextStyle(
-                                  color: Color(0x99FFFFFF), fontSize: 13)),
-                          const SizedBox(width: 16),
-                          Expanded(
-                            child: DropdownButtonHideUnderline(
-                              child: DropdownButton<String>(
-                                value: currentModel,
-                                isExpanded: true,
-                                dropdownColor: const Color(0xFF0E141B),
+                                  color: Color(0x9900FFCC), fontSize: 11)),
+                        ]),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(20, 4, 20, 28),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        sectionTitle("模型服务"),
+                        Container(
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0E141B),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: const Color(0x18FFFFFF)),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              TextField(
+                                controller: _keyCtrl,
+                                obscureText: !_showKey,
                                 style: const TextStyle(
                                     color: Colors.white, fontSize: 14),
-                                items: [
-                                  for (final m in _models)
-                                    DropdownMenuItem(
-                                      value: m,
-                                      child: Text(m,
-                                          style: const TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 14)),
+                                decoration: InputDecoration(
+                                  labelText: "DeepSeek API Key",
+                                  hintText: "sk-…",
+                                  labelStyle: const TextStyle(
+                                      color: Color(0x99FFFFFF), fontSize: 13),
+                                  hintStyle: const TextStyle(
+                                      color: Color(0x44FFFFFF), fontSize: 13),
+                                  helperText: "只保存在本机，不会上传",
+                                  helperStyle: const TextStyle(
+                                      color: Color(0x55FFFFFF), fontSize: 11),
+                                  suffixIcon: IconButton(
+                                    icon: Icon(
+                                        _showKey
+                                            ? Icons.visibility_off
+                                            : Icons.visibility,
+                                        size: 18,
+                                        color: Colors.white38),
+                                    onPressed: () =>
+                                        setState(() => _showKey = !_showKey),
+                                  ),
+                                  filled: true,
+                                  fillColor: const Color(0xFF0A1016),
+                                  enabledBorder: fieldBorder,
+                                  focusedBorder: const OutlineInputBorder(
+                                    borderRadius: radius,
+                                    borderSide:
+                                        BorderSide(color: Color(0x9900FFCC)),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              Row(
+                                children: [
+                                  const Text("模型",
+                                      style: TextStyle(
+                                          color: Color(0x99FFFFFF),
+                                          fontSize: 13)),
+                                  const SizedBox(width: 14),
+                                  Expanded(
+                                    child: DropdownButtonHideUnderline(
+                                      child: DropdownButton<String>(
+                                        value: currentModel,
+                                        isExpanded: true,
+                                        dropdownColor: const Color(0xFF0E141B),
+                                        style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 14),
+                                        items: [
+                                          for (final m in _models)
+                                            DropdownMenuItem(
+                                              value: m,
+                                              child: Text(m,
+                                                  style: const TextStyle(
+                                                      color: Colors.white,
+                                                      fontSize: 14)),
+                                            ),
+                                        ],
+                                        onChanged: (v) {
+                                          if (v == null) return;
+                                          setState(() {
+                                            _modelCtrl.text = v;
+                                            _testResult = "";
+                                          });
+                                        },
+                                      ),
                                     ),
+                                  ),
                                 ],
-                                onChanged: (v) {
-                                  if (v == null) return;
+                              ),
+                              Row(
+                                children: [
+                                  TextButton.icon(
+                                    onPressed: _testing ? null : _testKey,
+                                    icon: _testing
+                                        ? const SizedBox(
+                                            width: 14,
+                                            height: 14,
+                                            child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                                color: Color(0xFF00FFCC)))
+                                        : const Icon(Icons.wifi_tethering,
+                                            size: 16,
+                                            color: Color(0xFF00FFCC)),
+                                    label: const Text("测试连接",
+                                        style: TextStyle(
+                                            color: Color(0xFF00FFCC),
+                                            fontSize: 13)),
+                                  ),
+                                  Expanded(
+                                    child: Text(
+                                      _testResult,
+                                      textAlign: TextAlign.right,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: _testResult.startsWith("✓")
+                                            ? const Color(0xFF00FFCC)
+                                            : Colors.white54,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                        sectionTitle("会话"),
+                        Container(
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0E141B),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: const Color(0x18FFFFFF)),
+                          ),
+                          child: Column(
+                            children: [
+                              ListTile(
+                                dense: true,
+                                leading: const Icon(Icons.delete_sweep_outlined,
+                                    size: 20, color: Colors.white54),
+                                title: const Text("清空当前对话",
+                                    style: TextStyle(
+                                        color: Colors.white, fontSize: 14)),
+                                onTap: () {
                                   setState(() {
-                                    _modelCtrl.text = v;
-                                    _testResult = "";
+                                    _msgs.clear();
+                                    _streamText = "";
                                   });
+                                  _saveMsgs();
                                 },
                               ),
-                            ),
+                              ListTile(
+                                dense: true,
+                                leading: const Icon(
+                                    Icons.delete_forever_outlined,
+                                    size: 20,
+                                    color: Colors.white54),
+                                title: const Text("清空全部对话",
+                                    style: TextStyle(
+                                        color: Colors.white, fontSize: 14)),
+                                onTap: () {
+                                  setState(() {
+                                    _sessions.clear();
+                                    _sessions.add(ChatSession(
+                                        _newId(), "新对话", <ChatMsg>[]));
+                                    _sessionKey = _sessions.first.id;
+                                    _msgs = _sessions.first.msgs;
+                                    _streamText = "";
+                                  });
+                                  _saveSessions();
+                                },
+                              ),
+                            ],
                           ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Row(
-                      children: [
-                        TextButton.icon(
-                          onPressed: _testing ? null : _testKey,
-                          icon: _testing
-                              ? const SizedBox(
-                                  width: 14,
-                                  height: 14,
-                                  child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Color(0xFF00FFCC)))
-                              : const Icon(Icons.wifi_tethering,
-                                  size: 16, color: Color(0xFF00FFCC)),
-                          label: const Text("测试连接",
-                              style: TextStyle(
-                                  color: Color(0xFF00FFCC), fontSize: 13)),
                         ),
-                        Expanded(
-                          child: Text(
-                            _testResult,
-                            textAlign: TextAlign.right,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: _testResult.startsWith("✓")
-                                  ? const Color(0xFF00FFCC)
-                                  : Colors.white54,
+                        sectionTitle("关于"),
+                        Container(
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0E141B),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: const Color(0x18FFFFFF)),
+                          ),
+                          child: Column(
+                            children: [
+                              ListTile(
+                                dense: true,
+                                leading: const Icon(Icons.article_outlined,
+                                    size: 20, color: Colors.white54),
+                                title: const Text("查看引擎日志",
+                                    style: TextStyle(
+                                        color: Colors.white, fontSize: 14)),
+                                onTap: _showEngineLog,
+                              ),
+                              ListTile(
+                                dense: true,
+                                leading: const Icon(Icons.public,
+                                    size: 20, color: Colors.white54),
+                                title: const Text("打开网页版",
+                                    style: TextStyle(
+                                        color: Colors.white, fontSize: 14)),
+                                onTap: () {
+                                  setState(() => _phase = "chat");
+                                  unawaited(_switchToWeb());
+                                },
+                              ),
+                              const ListTile(
+                                dense: true,
+                                leading: Icon(Icons.info_outline,
+                                    size: 20, color: Colors.white38),
+                                title: Text("落锤 1.1.0",
+                                    style: TextStyle(
+                                        color: Colors.white38, fontSize: 13)),
+                                subtitle: Text("本地 DSH 引擎 · 原生界面",
+                                    style: TextStyle(
+                                        color: Colors.white24, fontSize: 11)),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 22),
+                        SizedBox(
+                          height: 48,
+                          child: FilledButton(
+                            onPressed: _saveSettingsAndStart,
+                            style: FilledButton.styleFrom(
+                              backgroundColor: const Color(0xFF00FFCC),
+                              foregroundColor: const Color(0xFF03211D),
+                              elevation: 0,
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(24)),
                             ),
+                            child: const Text("保存",
+                                style: TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w600)),
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 14),
-                    SizedBox(
-                      height: 48,
-                      child: FilledButton(
-                        onPressed: _saveSettingsAndStart,
-                        style: FilledButton.styleFrom(
-                          backgroundColor: const Color(0xFF00FFCC),
-                          foregroundColor: const Color(0xFF03211D),
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(24)),
-                        ),
-                        child: const Text("保存并启动",
-                            style: TextStyle(
-                                fontSize: 15, fontWeight: FontWeight.w600)),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextButton(
-                            onPressed: () {
-                              setState(() {
-                                _msgs.clear();
-                                _streamText = "";
-                              });
-                              _saveMsgs();
-                            },
-                            child: const Text("清空当前对话",
-                                style: TextStyle(
-                                    color: Colors.white54, fontSize: 12)),
-                          ),
-                        ),
-                        Expanded(
-                          child: TextButton(
-                            onPressed: () {
-                              setState(() {
-                                _sessions.clear();
-                                _sessions.add(ChatSession(
-                                    _newId(), "新对话", <ChatMsg>[]));
-                                _sessionKey = _sessions.first.id;
-                                _msgs = _sessions.first.msgs;
-                                _streamText = "";
-                              });
-                              _saveSessions();
-                            },
-                            child: const Text("清空全部对话",
-                                style: TextStyle(
-                                    color: Colors.white54, fontSize: 12)),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    TextButton(
-                      onPressed: _switchToWeb,
-                      child: const Text("先用网页版",
-                          style:
-                              TextStyle(color: Colors.white38, fontSize: 13)),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
+              ],
             ),
           ),
         ],
