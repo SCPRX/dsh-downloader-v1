@@ -49,7 +49,9 @@ class ChatMsg {
   final String text;
   final bool mine;
   final int kind;
-  ChatMsg(this.text, this.mine, {this.kind = 0});
+  final int ts;
+  ChatMsg(this.text, this.mine, {this.kind = 0, int? ts})
+      : ts = ts ?? DateTime.now().millisecondsSinceEpoch;
 }
 
 class AppRoot extends StatefulWidget {
@@ -402,7 +404,9 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
             if (raw is List) {
               for (final m in raw) {
                 if (m is Map) {
-                  msgs.add(ChatMsg((m['t'] ?? "").toString(), m['m'] == true));
+                  msgs.add(ChatMsg((m['t'] ?? "").toString(), m['m'] == true,
+                      kind: (m['k'] as num?)?.toInt() ?? 0,
+                      ts: (m['ts'] as num?)?.toInt()));
                 }
               }
             }
@@ -420,7 +424,9 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
           final msgs = <ChatMsg>[];
           for (final m in list) {
             if (m is Map) {
-              msgs.add(ChatMsg((m['t'] ?? "").toString(), m['m'] == true));
+              msgs.add(ChatMsg((m['t'] ?? "").toString(), m['m'] == true,
+                      kind: (m['k'] as num?)?.toInt() ?? 0,
+                      ts: (m['ts'] as num?)?.toInt()));
             }
           }
           _sessions.add(ChatSession(_newId(), "历史对话", msgs));
@@ -445,7 +451,8 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
             'id': s.id,
             'title': s.title,
             'msgs': [
-              for (final m in s.msgs) {'t': m.text, 'm': m.mine}
+              for (final m in s.msgs)
+                {'t': m.text, 'm': m.mine, 'k': m.kind, 'ts': m.ts}
             ],
           }
       ];
@@ -1145,6 +1152,11 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   Future<void> _send() async {
     final text = _inputCtrl.text.trim();
     if (text.isEmpty || _sending) return;
+    if (text.startsWith("/")) {
+      _inputCtrl.clear();
+      _handleSlash(text);
+      return;
+    }
     if (!_rpcReady) {
       _inputCtrl.clear();
       setState(() {
@@ -1697,6 +1709,189 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     );
   }
 
+  int get _ctxChars =>
+      _msgs.fold(0, (n, m) => n + m.text.length) + _streamText.length;
+
+  String get _ctxText {
+    final chars = _ctxChars;
+    if (chars == 0) return "";
+    return "约 ${(chars * 0.7).round()} tokens · $chars 字";
+  }
+
+  void _messageActions(String text, bool isAi) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF0D1620),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.copy, size: 20, color: Colors.white70),
+              title: const Text("复制",
+                  style: TextStyle(color: Colors.white, fontSize: 14)),
+              onTap: () {
+                Clipboard.setData(ClipboardData(text: text));
+                Navigator.pop(ctx);
+              },
+            ),
+            if (isAi)
+              ListTile(
+                leading: const Icon(Icons.refresh,
+                    size: 20, color: Color(0xFF00FFCC)),
+                title: const Text("重新生成",
+                    style: TextStyle(color: Colors.white, fontSize: 14)),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _regenerate();
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _regenerate() async {
+    String last = "";
+    for (final m in _msgs.reversed) {
+      if (m.mine) {
+        last = m.text;
+        break;
+      }
+    }
+    if (last.isEmpty || _sending) return;
+    setState(() => _sending = true);
+    try {
+      await _rpc('session/query', {
+        'sessionId': _sessionId,
+        'contentBlocks': [
+          {'type': 'text', 'text': last}
+        ],
+      }, timeout: const Duration(minutes: 10));
+    } catch (e) {
+      setState(() {
+        _sending = false;
+        _msgs.add(ChatMsg("发送失败: $e", false));
+      });
+      _scrollToEnd();
+    }
+  }
+
+  void _exportConversation() {
+    final b = StringBuffer();
+    b.writeln("# 落锤对话 - ${_curTitle}");
+    for (final m in _msgs) {
+      final t = DateTime.fromMillisecondsSinceEpoch(m.ts);
+      final hh = t.hour.toString().padLeft(2, "0");
+      final mm = t.minute.toString().padLeft(2, "0");
+      b.writeln();
+      b.writeln(m.mine ? "**我** ($hh:$mm)" : "**AI** ($hh:$mm)");
+      b.writeln();
+      b.writeln(m.text);
+    }
+    Clipboard.setData(ClipboardData(text: b.toString()));
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      const SnackBar(
+          content: Text("已复制为 Markdown"), duration: Duration(seconds: 1)),
+    );
+  }
+
+  bool _handleSlash(String text) {
+    final parts = text.trim().split(RegExp(r"\s+"));
+    final cmd = parts.first.toLowerCase();
+    switch (cmd) {
+      case "/new":
+        _newChat();
+        return true;
+      case "/clear":
+        setState(() {
+          _msgs.clear();
+          _streamText = "";
+        });
+        _saveMsgs();
+        return true;
+      case "/export":
+        _exportConversation();
+        return true;
+      case "/web":
+        unawaited(_switchToWeb());
+        return true;
+      case "/model":
+        final m = parts.length > 1 ? parts[1] : "";
+        if (_models.contains(m)) {
+          setState(() => _model = m);
+          _modelCtrl.text = m;
+          unawaited(_saveSettings());
+          _engineRestartHint();
+        }
+        return true;
+      case "/help":
+        setState(() {
+          _msgs.add(ChatMsg(
+              "可用命令：\n/new 新建对话\n/clear 清空当前\n/export 导出复制\n/web 网页版\n/model deepseek-flash 或 deepseek-v4-pro\n/help 帮助",
+              false));
+        });
+        _scrollToEnd();
+        return true;
+    }
+    return false;
+  }
+
+  void _engineRestartHint() {
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(
+        content: const Text("已切换模型，重启引擎后生效"),
+        action: SnackBarAction(
+          label: "立即重启",
+          onPressed: () {
+            unawaited(_ch.invokeMethod('killEngine'));
+            unawaited(_startEngine());
+          },
+        ),
+      ),
+    );
+  }
+
+  void _pickModel() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF0D1620),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.all(14),
+              child: Text("选择模型",
+                  style: TextStyle(color: Colors.white70, fontSize: 13)),
+            ),
+            for (final m in _models)
+              ListTile(
+                leading: Icon(
+                    _model == m
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_off,
+                    size: 20,
+                    color: _model == m
+                        ? const Color(0xFF00FFCC)
+                        : Colors.white38),
+                title: Text(m,
+                    style: const TextStyle(color: Colors.white, fontSize: 14)),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  setState(() => _model = m);
+                  _modelCtrl.text = m;
+                  unawaited(_saveSettings());
+                  _engineRestartHint();
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _fetchBalance() async {
     final key = _keyCtrl.text.trim().isEmpty ? _apiKey : _keyCtrl.text.trim();
     if (key.isEmpty) {
@@ -2020,6 +2215,24 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                             decoration: none,
                             decorationColor: Colors.transparent)),
                   ),
+                  InkWell(
+                    onTap: _pickModel,
+                    borderRadius: BorderRadius.circular(10),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF10202A),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: const Color(0x2200FFCC)),
+                      ),
+                      child: Text(
+                        _model == "deepseek-v4-pro" ? "V4 Pro" : "Flash",
+                        style: const TextStyle(
+                            color: Color(0xCC00FFCC), fontSize: 10.5),
+                      ),
+                    ),
+                  ),
                   const SizedBox(width: 6),
                   Container(
                     width: 8,
@@ -2168,19 +2381,22 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                       alignment: mine
                           ? Alignment.centerRight
                           : Alignment.centerLeft,
-                      child: _Bubble(
+                      child: Column(
+                        crossAxisAlignment: mine
+                            ? CrossAxisAlignment.end
+                            : CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _Bubble(
                         text: text,
                         mine: mine,
                         kind: isStream ? 0 : _msgs[i].kind,
-                        onLongPress: () {
-                          Clipboard.setData(ClipboardData(text: text));
-                          ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-                            const SnackBar(
-                              content: Text("已复制"),
-                              duration: Duration(milliseconds: 900),
-                            ),
-                          );
-                        },
+                        ts: isStream ? null : _msgs[i].ts,
+                            onLongPress: () =>
+                                _messageActions(text, !mine && !isStream),
+                          ),
+                          if (!isStream) _BubbleTime(ts: _msgs[i].ts),
+                        ],
                       ),
                     ),
                   );
@@ -2195,6 +2411,18 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                     height: 14,
                     child: CircularProgressIndicator(
                         strokeWidth: 2, color: Color(0xFF00FFCC))),
+              ),
+            if (_ctxText.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(right: 18, bottom: 2),
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: Text(_ctxText,
+                      style: const TextStyle(
+                          color: Color(0x44FFFFFF),
+                          fontSize: 10,
+                          decoration: TextDecoration.none)),
+                ),
               ),
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
@@ -2480,16 +2708,38 @@ class StarryCloudPainter extends CustomPainter {
   bool shouldRepaint(covariant StarryCloudPainter oldDelegate) => true;
 }
 
+class _BubbleTime extends StatelessWidget {
+  final int ts;
+  const _BubbleTime({required this.ts});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = DateTime.fromMillisecondsSinceEpoch(ts);
+    final hh = t.hour.toString().padLeft(2, "0");
+    final mm = t.minute.toString().padLeft(2, "0");
+    return Padding(
+      padding: const EdgeInsets.only(top: 3, left: 4, right: 4),
+      child: Text("$hh:$mm",
+          style: const TextStyle(
+              color: Color(0x44FFFFFF),
+              fontSize: 10,
+              decoration: TextDecoration.none)),
+    );
+  }
+}
+
 class _Bubble extends StatelessWidget {
   final String text;
   final bool mine;
   final int kind;
+  final int? ts;
   final VoidCallback onLongPress;
   const _Bubble({
     required this.text,
     required this.mine,
     required this.kind,
     required this.onLongPress,
+    this.ts,
   });
 
   @override
@@ -2534,6 +2784,21 @@ class _Bubble extends StatelessWidget {
         ),
         child: _MarkdownBody(text: text),
       ),
+    );
+  }
+
+  Widget _timeLabel() {
+    if (ts == null) return const SizedBox.shrink();
+    final t = DateTime.fromMillisecondsSinceEpoch(ts!);
+    final hh = t.hour.toString().padLeft(2, "0");
+    final mm = t.minute.toString().padLeft(2, "0");
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Text("$hh:$mm",
+          style: const TextStyle(
+              color: Color(0x55FFFFFF),
+              fontSize: 10,
+              decoration: TextDecoration.none)),
     );
   }
 }
