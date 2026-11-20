@@ -35,6 +35,13 @@ class MyApp extends StatelessWidget {
 
 class _SwitchRequested implements Exception {}
 
+class ChatSession {
+  final String id;
+  String title;
+  final List<ChatMsg> msgs;
+  ChatSession(this.id, this.title, this.msgs);
+}
+
 class ChatMsg {
   final String text;
   final bool mine;
@@ -94,7 +101,9 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   String _sessionId = "";
   bool _rpcReady = false;
 
-  final List<ChatMsg> _msgs = [];
+  List<ChatMsg> _msgs = [];
+  final List<ChatSession> _sessions = [];
+  String _sessionKey = "";
   bool _msgsLoaded = false;
   String _streamText = "";
   bool _sending = false;
@@ -218,7 +227,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     try {
       _appDir = (await _ch.invokeMethod<String>('filesDirPath')) ?? "";
       await _loadSettings();
-      await _loadMsgs();
+      await _loadSessions();
       if (_apiKey.isEmpty) {
         setState(() {
           _phase = "chat";
@@ -317,7 +326,9 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       if (ready) {
         _rpcReady = true;
         if (_sessionId.isEmpty) {
-          _sessionId = 's${DateTime.now().millisecondsSinceEpoch}';
+          _sessionId = _sessionKey.isEmpty
+          ? 's${DateTime.now().millisecondsSinceEpoch}'
+          : _sessionKey;
         }
         _startKeepAliveLoop(text: "落锤 运行中 · 可切到后台");
         setState(() {
@@ -336,321 +347,121 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
 
   File get _msgsFile => File("$_appDir/native_chat_messages.json");
 
-  Future<void> _loadMsgs() async {
+  File get _sessionsFile => File("$_appDir/native_chat_sessions.json");
+
+  String _newId() => 's${DateTime.now().microsecondsSinceEpoch}';
+
+  Future<void> _loadSessions() async {
     if (_msgsLoaded) return;
     _msgsLoaded = true;
     try {
-      if (await _msgsFile.exists()) {
-        final list = jsonDecode(await _msgsFile.readAsString());
+      if (await _sessionsFile.exists()) {
+        final list = jsonDecode(await _sessionsFile.readAsString());
         if (list is List) {
           for (final item in list) {
-            if (item is Map) {
-              _msgs.add(ChatMsg((item['t'] ?? "").toString(), item['m'] == true));
+            if (item is! Map) continue;
+            final msgs = <ChatMsg>[];
+            final raw = item['msgs'];
+            if (raw is List) {
+              for (final m in raw) {
+                if (m is Map) {
+                  msgs.add(ChatMsg((m['t'] ?? "").toString(), m['m'] == true));
+                }
+              }
             }
+            _sessions.add(ChatSession(
+              (item['id'] ?? _newId()).toString(),
+              (item['title'] ?? "新对话").toString(),
+              msgs,
+            ));
           }
         }
       }
+      if (_sessions.isEmpty && await _msgsFile.exists()) {
+        final list = jsonDecode(await _msgsFile.readAsString());
+        if (list is List) {
+          final msgs = <ChatMsg>[];
+          for (final m in list) {
+            if (m is Map) {
+              msgs.add(ChatMsg((m['t'] ?? "").toString(), m['m'] == true));
+            }
+          }
+          _sessions.add(ChatSession(_newId(), "历史对话", msgs));
+        }
+      }
     } catch (_) {}
+    if (_sessions.isEmpty) {
+      _sessions.add(ChatSession(_newId(), "新对话", <ChatMsg>[]));
+    }
+    _sessionKey = _sessions.first.id;
+    _msgs = _sessions.first.msgs;
     if (_msgs.isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToEnd());
     }
   }
 
-  void _saveMsgs() {
+  void _saveSessions() {
     try {
       final list = [
-        for (final m in _msgs) {'t': m.text, 'm': m.mine}
+        for (final s in _sessions)
+          {
+            'id': s.id,
+            'title': s.title,
+            'msgs': [
+              for (final m in s.msgs) {'t': m.text, 'm': m.mine}
+            ],
+          }
       ];
-      unawaited(_msgsFile.writeAsString(jsonEncode(list)));
+      unawaited(_sessionsFile.writeAsString(jsonEncode(list)));
     } catch (_) {}
+  }
+
+  void _saveMsgs() => _saveSessions();
+
+  void _switchSession(String id) {
+    setState(() {
+      _sessionKey = id;
+      for (final s in _sessions) {
+        if (s.id == id) {
+          _msgs = s.msgs;
+          break;
+        }
+      }
+      _sessionId = id;
+      _sending = false;
+      _streamText = "";
+      _chunkSeen = false;
+    });
+    _saveSessions();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToEnd());
   }
 
   void _newChat() {
     setState(() {
-      _msgs.clear();
+      final s = ChatSession(_newId(), "新对话", <ChatMsg>[]);
+      _sessions.insert(0, s);
+      _sessionKey = s.id;
+      _msgs = s.msgs;
+      _sessionId = s.id;
       _streamText = "";
-      _sessionId = 's${DateTime.now().millisecondsSinceEpoch}';
       _sending = false;
       _chunkSeen = false;
     });
-    _saveMsgs();
+    _saveSessions();
   }
 
-  Future<void> _loadSettings() async {
-    try {
-      if (await _settingsFile.exists()) {
-        final m = jsonDecode(await _settingsFile.readAsString());
-        if (m is Map) {
-          _apiKey = (m['apiKey'] ?? "").toString();
-          _model = (m['model'] ?? "deepseek-flash").toString();
-        }
-      }
-    } catch (_) {}
-    _keyCtrl.text = _apiKey;
-    _modelCtrl.text = _model;
-  }
-
-  Future<void> _saveSettings() async {
-    try {
-      await _settingsFile.writeAsString(
-          jsonEncode({'apiKey': _apiKey, 'model': _model}));
-    } catch (_) {}
-  }
-
-  Future<void> _downloadEnv() async {
-    final String? zipPath = await _ch.invokeMethod<String>('envZipPath');
-    if (zipPath == null || zipPath.isEmpty) throw '拿不到安装包路径';
-    while (true) {
-      try {
-        await _download(zipPath);
-        break;
-      } on _SwitchRequested {
-        continue;
-      }
-    }
-    _startKeepAliveLoop(text: "正在解压环境，请勿清理后台…");
+  void _deleteSession(String id) {
     setState(() {
-      _progress = 1.0;
-      _status = "下载完成，正在解压(耗时较长)...";
+      _sessions.removeWhere((s) => s.id == id);
+      if (_sessions.isEmpty) {
+        _sessions.add(ChatSession(_newId(), "新对话", <ChatMsg>[]));
+      }
+      if (_sessionKey == id) {
+        _sessionKey = _sessions.first.id;
+        _msgs = _sessions.first.msgs;
+      }
     });
-    await _ch.invokeMethod('startExtract', {'path': zipPath});
-  }
-
-  Future<void> _download(String zipPath) async {
-    final zip = File(zipPath);
-    final part = File('$zipPath.part');
-
-    if (await zip.exists() && await zip.length() > 1024) {
-      final head = await zip.openRead(0, 2).first;
-      if (head.length == 2 && head[0] == 0x50 && head[1] == 0x4B) {
-        setState(() => _progress = 1.0);
-        return;
-      }
-      await zip.delete();
-    }
-
-    int start = await part.exists() ? await part.length() : 0;
-    if (start >= _envSize) {
-      await part.delete();
-      start = 0;
-    }
-
-    setState(() {
-      _status = start > 0
-          ? "继续下载核心环境（已有 ${_mb(start)}）..."
-          : "首次启动，正在下载核心环境(约 198MB)...";
-    });
-
-    _startKeepAliveLoop(text: "正在下载环境，请勿清理后台…");
-
-    final runId = _runId;
-    _downloading = true;
-    if (_srcBps.isEmpty) await _testSources();
-    final order = <int>[for (int i = 0; i < _envUrls.length; i++) i]
-      ..sort((a, b) => (_srcBps[b] ?? -1).compareTo(_srcBps[a] ?? -1));
-
-    Object? lastError;
-    try {
-      for (final i in order) {
-        if (runId != _runId) throw _SwitchRequested();
-        setState(() {
-          _speed = "";
-          _curName = _envNames[i];
-        });
-        try {
-          await _downloadFrom(i, runId, part, start: start);
-          lastError = null;
-          break;
-        } catch (e) {
-          lastError = e;
-          if (await part.exists()) start = await part.length();
-          final next = order.indexOf(i) + 1;
-          if (next < order.length && mounted) {
-            setState(() => _status =
-                "${_envNames[i]} 不行，换 ${_envNames[order[next]]}...");
-          }
-        }
-      }
-      if (lastError != null) throw lastError;
-
-      final bool partOk = await part.exists() && await part.length() == _envSize;
-      if (!partOk) {
-        if (await part.exists()) await part.delete();
-        throw '下载的文件大小不对（可能是镜像的旧文件），已删除，请重试';
-      }
-      final head = await part.openRead(0, 2).first;
-      if (head.length < 2 || head[0] != 0x50 || head[1] != 0x4B) {
-        await part.delete();
-        throw '下载到的不是 zip 文件，已删除，请重试';
-      }
-      if (await zip.exists()) await zip.delete();
-      await part.rename(zip.path);
-    } finally {
-      _downloading = false;
-    }
-  }
-
-  Future<void> _downloadFrom(int index, int runId, File part,
-      {required int start}) async {
-    final client = http.Client();
-    try {
-      final req = http.Request('GET', Uri.parse(_envUrls[index]));
-      if (start > 0) req.headers['range'] = 'bytes=$start-';
-      final resp = await client.send(req).timeout(const Duration(seconds: 15));
-      if (resp.statusCode == 416 && start > 0) return;
-      if (resp.statusCode != 200 && resp.statusCode != 206) {
-        throw 'HTTP ${resp.statusCode}';
-      }
-      if (resp.statusCode == 200) {
-        final len = resp.contentLength;
-        if (len != null && len > 0 && len != _envSize) {
-          throw '这个源上是旧文件';
-        }
-      }
-      int totalBytes = 0;
-      IOSink sink;
-      int received = start;
-      if (resp.statusCode == 206) {
-        totalBytes = _totalFromRange(resp.headers['content-range']) ??
-            (resp.contentLength ?? 0) + start;
-        if (totalBytes != _envSize) throw '这个源上是旧文件';
-        sink = part.openWrite(mode: FileMode.append);
-      } else {
-        received = 0;
-        totalBytes = resp.contentLength ?? 0;
-        sink = part.openWrite(mode: FileMode.write);
-      }
-      final done = Completer<void>();
-      final sw = Stopwatch()..start();
-      late final StreamSubscription<List<int>> sub;
-      sub = resp.stream.listen(
-        (chunk) {
-          if (runId != _runId) {
-            sub.cancel();
-            if (!done.isCompleted) done.completeError(_SwitchRequested());
-            return;
-          }
-          sink.add(chunk);
-          received += chunk.length;
-          final ms = sw.elapsedMilliseconds;
-          final bps = ms > 1000 ? received * 1000 ~/ ms : 0;
-          final now = DateTime.now();
-          if (totalBytes > 0 &&
-              now.difference(_lastProgressPaint).inMilliseconds > 250 &&
-              mounted) {
-            _lastProgressPaint = now;
-            setState(() {
-              _progress = (received / totalBytes).clamp(0.0, 1.0).toDouble();
-              _speed = _speedText(bps);
-              _curName = _envNames[index];
-              _status = "下载中 ${_mb(received)} / ${_mb(totalBytes)}";
-            });
-          }
-          if (ms > 20000 && bps < 50 * 1024 && !done.isCompleted) {
-            sub.cancel();
-            done.completeError('该源太慢');
-          }
-        },
-        onError: (Object e) {
-          if (!done.isCompleted) done.completeError(e);
-        },
-        onDone: () {
-          if (!done.isCompleted) done.complete();
-        },
-        cancelOnError: true,
-      );
-      try {
-        await done.future;
-      } finally {
-        await sub.cancel();
-        await sink.close();
-      }
-      if (totalBytes > 0 && received < totalBytes) throw '下载不完整';
-    } finally {
-      client.close();
-    }
-  }
-
-  int? _totalFromRange(String? contentRange) {
-    if (contentRange == null) return null;
-    final i = contentRange.lastIndexOf('/');
-    if (i < 0) return null;
-    return int.tryParse(contentRange.substring(i + 1));
-  }
-
-  String _mb(int bytes) => "${(bytes / 1024 / 1024).toStringAsFixed(0)} MB";
-  String _speedText(int bps) {
-    if (bps <= 0) return "";
-    if (bps >= 1024 * 1024) {
-      return "${(bps / 1024 / 1024).toStringAsFixed(1)} MB/s";
-    }
-    return "${(bps / 1024).toStringAsFixed(0)} KB/s";
-  }
-
-  Future<void> _testSources() async {
-    final jobs = <Future<void>>[];
-    for (int i = 0; i < _envUrls.length; i++) {
-      if (mounted) setState(() => _srcInfo[i] = "测试中...");
-      jobs.add(_probeSource(i).then((res) {
-        if (mounted) setState(() => _srcInfo[i] = res);
-      }));
-    }
-    await Future.wait(jobs);
-  }
-
-  Future<String> _probeSource(int i) async {
-    final client = http.Client();
-    try {
-      final sw = Stopwatch()..start();
-      final req = http.Request('GET', Uri.parse(_envUrls[i]));
-      req.headers['range'] = 'bytes=0-524287';
-      final resp = await client.send(req).timeout(const Duration(seconds: 8));
-      int got = 0;
-      try {
-        await for (final chunk
-            in resp.stream.timeout(const Duration(seconds: 8))) {
-          got += chunk.length;
-          if (got >= 524288) break;
-        }
-      } catch (_) {}
-      if (resp.statusCode != 200 && resp.statusCode != 206) {
-        _srcBps[i] = -1;
-        return "失败";
-      }
-      if (got < 32768) {
-        _srcBps[i] = -1;
-        return "连不上";
-      }
-      final bps = got * 1000 ~/ math.max(sw.elapsedMilliseconds, 1);
-      _srcBps[i] = bps.toDouble();
-      return "≈${_speedText(bps)}";
-    } catch (_) {
-      _srcBps[i] = -1;
-      return "连不上";
-    } finally {
-      client.close();
-    }
-  }  Future<void> _keepAlive(bool on) async {
-    try {
-      await _ch.invokeMethod('keepAlive', {
-        'on': on,
-        'text': _keepAliveText,
-      });
-    } catch (_) {}
-  }
-
-  void _startKeepAliveLoop({String? text}) {
-    if (text != null) _keepAliveText = text;
-    _keepAliveTimer?.cancel();
-    unawaited(_keepAlive(true));
-    _keepAliveTimer = Timer.periodic(const Duration(seconds: 25), (_) {
-      unawaited(_keepAlive(true));
-    });
-  }
-
-  void _stopKeepAliveLoop() {
-    _keepAliveTimer?.cancel();
-    _keepAliveTimer = null;
+    _saveSessions();
   }
 
   Future<void> _startEngine() async {
@@ -945,6 +756,11 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     _inputCtrl.clear();
     setState(() {
       _msgs.add(ChatMsg(text, true));
+      for (final s in _sessions) {
+        if (s.id == _sessionKey && s.title == "新对话") {
+          s.title = text.length > 12 ? text.substring(0, 12) : text;
+        }
+      }
       _sending = true;
       _streamText = "";
       _chunkSeen = false;
@@ -1218,6 +1034,43 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                                 fontSize: 15, fontWeight: FontWeight.w600)),
                       ),
                     ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextButton(
+                            onPressed: () {
+                              setState(() {
+                                _msgs.clear();
+                                _streamText = "";
+                              });
+                              _saveMsgs();
+                            },
+                            child: const Text("清空当前对话",
+                                style: TextStyle(
+                                    color: Colors.white54, fontSize: 12)),
+                          ),
+                        ),
+                        Expanded(
+                          child: TextButton(
+                            onPressed: () {
+                              setState(() {
+                                _sessions.clear();
+                                _sessions.add(ChatSession(
+                                    _newId(), "新对话", <ChatMsg>[]));
+                                _sessionKey = _sessions.first.id;
+                                _msgs = _sessions.first.msgs;
+                                _streamText = "";
+                              });
+                              _saveSessions();
+                            },
+                            child: const Text("清空全部对话",
+                                style: TextStyle(
+                                    color: Colors.white54, fontSize: 12)),
+                          ),
+                        ),
+                      ],
+                    ),
                     const SizedBox(height: 8),
                     TextButton(
                       onPressed: _switchToWeb,
@@ -1266,9 +1119,92 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     }
   }
 
+  String get _curTitle {
+    for (final s in _sessions) {
+      if (s.id == _sessionKey) return s.title;
+    }
+    return "落锤";
+  }
+
+  Widget _buildDrawer() {
+    return Drawer(
+      backgroundColor: const Color(0xFF0A1018),
+      child: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 18, 18, 8),
+              child: Row(
+                children: [
+                  const Text("会话",
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600)),
+                  const Spacer(),
+                  TextButton.icon(
+                    onPressed: () {
+                      Navigator.pop(context);
+                      _newChat();
+                    },
+                    icon: const Icon(Icons.add, size: 16, color: Color(0xFF00FFCC)),
+                    label: const Text("新建",
+                        style: TextStyle(color: Color(0xFF00FFCC), fontSize: 13)),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1, color: Color(0x22FFFFFF)),
+            Expanded(
+              child: ListView.builder(
+                itemCount: _sessions.length,
+                itemBuilder: (ctx, i) {
+                  final s = _sessions[i];
+                  final selected = s.id == _sessionKey;
+                  return ListTile(
+                    dense: true,
+                    selected: selected,
+                    selectedTileColor: const Color(0x2200FFCC),
+                    leading: Icon(Icons.chat_bubble_outline,
+                        size: 18,
+                        color: selected
+                            ? const Color(0xFF00FFCC)
+                            : Colors.white38),
+                    title: Text(s.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            color: selected ? Colors.white : Colors.white70,
+                            fontSize: 14)),
+                    subtitle: Text("${s.msgs.length} 条消息",
+                        style: const TextStyle(
+                            color: Colors.white30, fontSize: 11)),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.delete_outline,
+                          size: 18, color: Colors.white30),
+                      onPressed: () => _deleteSession(s.id),
+                    ),
+                    onTap: () {
+                      Navigator.pop(context);
+                      _switchSession(s.id);
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildChat() {
     const none = TextDecoration.none;
-    return Container(
+    return Scaffold(
+      backgroundColor: const Color(0xFF03060A),
+      drawer: _buildDrawer(),
+      body: Container(
       color: const Color(0xFF03060A),
       child: SafeArea(
         child: Column(
@@ -1277,14 +1213,36 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
               padding: const EdgeInsets.fromLTRB(18, 10, 8, 6),
               child: Row(
                 children: [
-                  const Text("落锤",
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 17,
-                          fontWeight: FontWeight.w600,
-                          letterSpacing: 1,
-                          decoration: none,
-                          decorationColor: Colors.transparent)),
+                  Builder(
+                    builder: (ctx) => IconButton(
+                      onPressed: () => Scaffold.of(ctx).openDrawer(),
+                      icon: const Icon(Icons.menu,
+                          size: 22, color: Colors.white70),
+                    ),
+                  ),
+                  Flexible(
+                    child: Text(_curTitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: 0.5,
+                            decoration: none,
+                            decorationColor: Colors.transparent)),
+                  ),
+                  const SizedBox(width: 6),
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: _rpcReady
+                          ? const Color(0xFF00FFCC)
+                          : (_failed ? const Color(0xFFFF5252) : const Color(0xFFFFD54F)),
+                    ),
+                  ),
                   const Spacer(),
                   IconButton(
                     tooltip: "新建对话",
@@ -1432,14 +1390,25 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                               : const Color(0xFF141A22),
                           borderRadius: BorderRadius.circular(14),
                         ),
-                        child: Text(text,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 15,
-                              height: 1.5,
-                              decoration: none,
-                              decorationColor: Colors.transparent,
-                            )),
+                        child: GestureDetector(
+                          onLongPress: () {
+                            Clipboard.setData(ClipboardData(text: text));
+                            ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+                              const SnackBar(
+                                content: Text("已复制"),
+                                duration: Duration(milliseconds: 900),
+                              ),
+                            );
+                          },
+                          child: Text(text,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 15,
+                                height: 1.5,
+                                decoration: none,
+                                decorationColor: Colors.transparent,
+                              )),
+                        ),
                       ),
                     ),
                   );
@@ -1502,7 +1471,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
           ],
         ),
       ),
-    );
+    ));
   }
 
   Widget _buildWeb(WebViewController web) {
