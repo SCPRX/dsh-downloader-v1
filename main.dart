@@ -64,7 +64,7 @@ class AppRoot extends StatefulWidget {
   State<AppRoot> createState() => _AppRootState();
 }
 
-class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
+class _AppRootState extends State<AppRoot> {
   static const MethodChannel _ch = MethodChannel('com.dsh.dshapp/status');
 
   String _phase = 'env';
@@ -141,25 +141,16 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   WebViewController? _web;
   String _engineUrl = "http://127.0.0.1:3090";
 
-  late AnimationController _bgController;
-  final math.Random _random = math.Random();
-  List<StarParticle> _stars = [];
-  List<CloudParticle> _clouds = [];
-
   @override
   void initState() {
     super.initState();
-    _bgController = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 16))
-      ..repeat();
-    _bgController.addListener(_updateParticles);
-    for (int i = 0; i < 6; i++) {
-      _clouds.add(_spawnCloud());
-    }
-    for (int i = 0; i < 60; i++) {
-      _stars.add(_spawnStar());
-    }
-
+    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.light,
+      statusBarBrightness: Brightness.dark,
+      systemNavigationBarColor: Color(0xFF03060A),
+      systemNavigationBarIconBrightness: Brightness.light,
+    ));
     _ch.setMethodCallHandler((call) async {
       if (!mounted) return;
       switch (call.method) {
@@ -200,46 +191,8 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     _bootstrap();
   }
 
-  CloudParticle _spawnCloud() => CloudParticle(
-        x: _random.nextBool() ? -0.6 : 1.6,
-        y: _random.nextDouble() * 0.8 + 0.1,
-        radius: 0.25 + _random.nextDouble() * 0.2,
-        opacity: 0.15 + _random.nextDouble() * 0.15,
-        vx: (_random.nextBool() ? 1 : -1) *
-            (0.0005 + _random.nextDouble() * 0.0005),
-      );
-
-  StarParticle _spawnStar() => StarParticle(
-        x: _random.nextDouble(),
-        y: _random.nextDouble(),
-        radius: 0.5 + _random.nextDouble() * 1.2,
-        maxLife: 100 + _random.nextDouble() * 200,
-        life: 0,
-      );
-
-  void _updateParticles() {
-    if (!mounted) return;
-    setState(() {
-      for (int i = _stars.length - 1; i >= 0; i--) {
-        var star = _stars[i];
-        star.life += 1;
-        if (star.life > star.maxLife) {
-          _stars[i] = _spawnStar();
-        }
-      }
-      for (int i = _clouds.length - 1; i >= 0; i--) {
-        var cloud = _clouds[i];
-        cloud.x += cloud.vx;
-        if (cloud.x < -1.0 || cloud.x > 2.0) {
-          _clouds[i] = _spawnCloud();
-        }
-      }
-    });
-  }
-
   @override
   void dispose() {
-    _bgController.dispose();
     _keepAliveTimer?.cancel();
     _startupTimer?.cancel();
     super.dispose();
@@ -1388,7 +1341,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       child: Stack(
         children: [
           Positioned.fill(
-            child: CustomPaint(painter: StarryCloudPainter(_clouds, _stars)),
+            child: const _StarField(),
           ),
           SafeArea(
             child: Column(
@@ -1517,13 +1470,15 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                                   ),
                                 ],
                               ),
-                              Row(
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 6,
+                                crossAxisAlignment: WrapCrossAlignment.center,
                                 children: [
                                   const Text("思考深度",
                                       style: TextStyle(
                                           color: Color(0x99FFFFFF),
                                           fontSize: 13)),
-                                  const SizedBox(width: 10),
                                   for (final r in const ["auto", "low", "medium", "high"])
                                     Padding(
                                       padding: const EdgeInsets.only(right: 6),
@@ -1652,7 +1607,9 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                                   style: TextStyle(
                                       color: Colors.white, fontSize: 14)),
                               const SizedBox(height: 10),
-                              Row(
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
                                 children: [
                                   for (final item in const [
                                     ["小", 0.9],
@@ -3033,101 +2990,85 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     );
   }
 
+  Widget _headerIcon(IconData icon, String tip, VoidCallback onTap,
+      {Color color = const Color(0xCC00FFCC)}) {
+    return IconButton(
+      tooltip: tip,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+      onPressed: onTap,
+      icon: Icon(icon, size: 20, color: color),
+    );
+  }
+
   Widget _buildChat() {
     const none = TextDecoration.none;
     return Scaffold(
       backgroundColor: const Color(0xFF03060A),
       drawer: _buildDrawer(),
-      body: Container(
-      color: const Color(0xFF03060A),
-      child: SafeArea(
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          const _StarField(),
+          SafeArea(
         child: Column(
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(18, 10, 8, 6),
+              padding: const EdgeInsets.fromLTRB(6, 6, 6, 2),
               child: Row(
                 children: [
                   Builder(
                     builder: (ctx) => IconButton(
+                      padding: EdgeInsets.zero,
+                      constraints:
+                          const BoxConstraints(minWidth: 40, minHeight: 40),
                       onPressed: () => Scaffold.of(ctx).openDrawer(),
                       icon: const Icon(Icons.menu,
                           size: 22, color: Colors.white70),
                     ),
                   ),
-                  Flexible(
-                    child: Text(_curTitle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: 0.5,
-                            decoration: none,
-                            decorationColor: Colors.transparent)),
-                  ),
-                  InkWell(
-                    onTap: _pickModel,
-                    borderRadius: BorderRadius.circular(10),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF10202A),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: const Color(0x2200FFCC)),
-                      ),
-                      child: Text(
-                        _model == "deepseek-v4-pro" ? "V4 Pro" : "Flash",
-                        style: const TextStyle(
-                            color: Color(0xCC00FFCC), fontSize: 10.5),
-                      ),
+                  Expanded(
+                    child: Row(
+                      children: [
+                        Flexible(
+                          child: Text(_curTitle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                  letterSpacing: 0.3,
+                                  decoration: none,
+                                  decorationColor: Colors.transparent)),
+                        ),
+                        const SizedBox(width: 7),
+                        Container(
+                          width: 7,
+                          height: 7,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: _rpcReady
+                                ? const Color(0xFF00FFCC)
+                                : (_failed
+                                    ? const Color(0xFFFF5252)
+                                    : const Color(0xFFFFD54F)),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(width: 6),
-                  Container(
-                    width: 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: _rpcReady
-                          ? const Color(0xFF00FFCC)
-                          : (_failed
-                              ? const Color(0xFFFF5252)
-                              : const Color(0xFFFFD54F)),
-                    ),
-                  ),
-                  const Spacer(),
-                  IconButton(
-                    tooltip: "新建对话",
-                    onPressed: _newChat,
-                    icon: const Icon(Icons.add_comment_outlined,
-                        size: 20, color: Color(0xCC00FFCC)),
-                  ),
-                  IconButton(
-                    tooltip: "设置",
-                    onPressed: () {
-                      setState(() {
-                        _phase = "setup";
-                        _failed = false;
-                        _status = "修改设置";
-                      });
-                    },
-                    icon: const Icon(Icons.settings_outlined,
-                        size: 20, color: Color(0xCC00FFCC)),
-                  ),
-                  IconButton(
-                    tooltip: "引擎日志",
-                    onPressed: _showEngineLog,
-                    icon: const Icon(Icons.article_outlined,
-                        size: 20, color: Color(0xCC00FFCC)),
-                  ),
-                  IconButton(
-                    tooltip: "网页版",
-                    onPressed: _switchToWeb,
-                    icon: const Icon(Icons.public,
-                        size: 20, color: Color(0xFF00FFCC)),
-                  ),
+                  _headerIcon(Icons.add_comment_outlined, "新建对话", _newChat),
+                  _headerIcon(Icons.settings_outlined, "设置", () {
+                    setState(() {
+                      _phase = "setup";
+                      _failed = false;
+                      _status = "修改设置";
+                    });
+                  }),
+                  _headerIcon(Icons.article_outlined, "引擎日志", _showEngineLog),
+                  _headerIcon(Icons.public, "网页版", _switchToWeb,
+                      color: const Color(0xFF00FFCC)),
                 ],
               ),
             ),
@@ -3175,7 +3116,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
             Expanded(
               child: ListView.builder(
                 controller: _scrollCtrl,
-                padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
                 itemCount: _msgs.length + (_streamText.isNotEmpty ? 1 : 0),
                 itemBuilder: (ctx, i) {
                   if (_msgs.isEmpty && _streamText.isEmpty) {
@@ -3289,18 +3230,53 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                   ],
                 ),
               ),
-            if (_ctxText.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(right: 18, bottom: 2),
-                child: Align(
-                  alignment: Alignment.centerRight,
-                  child: Text(_ctxText,
-                      style: const TextStyle(
-                          color: Color(0x44FFFFFF),
-                          fontSize: 10,
-                          decoration: TextDecoration.none)),
-                ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 2),
+              child: Row(
+                children: [
+                  InkWell(
+                    onTap: _pickModel,
+                    borderRadius: BorderRadius.circular(10),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 9, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0E1A22),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: const Color(0x2200FFCC)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.memory,
+                              size: 11, color: Color(0xAA00FFCC)),
+                          const SizedBox(width: 4),
+                          Text(
+                            _model == "deepseek-v4-pro" ? "V4 Pro" : "Flash",
+                            style: const TextStyle(
+                                color: Color(0xCC00FFCC), fontSize: 10.5),
+                          ),
+                          const Icon(Icons.expand_more,
+                              size: 12, color: Color(0x8800FFCC)),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const Spacer(),
+                  if (_ctxText.isNotEmpty)
+                    Flexible(
+                      child: Text(_ctxText,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(
+                              color: Color(0x44FFFFFF),
+                              fontSize: 10,
+                              decoration: TextDecoration.none)),
+                    ),
+                ],
               ),
+            ),
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
               child: Row(
@@ -3370,7 +3346,8 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
           ],
         ),
       ),
-    ));
+        ],
+      ));
   }
 
   Widget _buildWeb(WebViewController web) {
@@ -3550,69 +3527,93 @@ class _TextDrawPainter extends CustomPainter {
       old.text != text || old.style != style;
 }
 
-class StarParticle {
-  double x, y, radius, maxLife, life;
-  StarParticle(
-      {required this.x,
-      required this.y,
-      required this.radius,
-      required this.maxLife,
-      required this.life});
+class _StarField extends StatefulWidget {
+  const _StarField();
+
+  @override
+  State<_StarField> createState() => _StarFieldState();
 }
 
-class CloudParticle {
-  double x, y, radius, opacity, vx;
-  CloudParticle(
-      {required this.x,
-      required this.y,
-      required this.radius,
-      required this.opacity,
-      required this.vx});
+class _StarFieldState extends State<_StarField>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c;
+
+  @override
+  void initState() {
+    super.initState();
+    _c = AnimationController(
+        vsync: this, duration: const Duration(seconds: 60))
+      ..repeat();
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return RepaintBoundary(
+      child: CustomPaint(painter: _StarFieldPainter(_c), size: Size.infinite),
+    );
+  }
 }
 
-class StarryCloudPainter extends CustomPainter {
-  final List<CloudParticle> clouds;
-  final List<StarParticle> stars;
-  StarryCloudPainter(this.clouds, this.stars);
+class _StarFieldPainter extends CustomPainter {
+  _StarFieldPainter(this.t) : super(repaint: t);
+
+  final Animation<double> t;
+  static final math.Random _r = math.Random(7);
+  static final List<List<double>> _stars = List.generate(
+      70,
+      (_) => [
+            _r.nextDouble(),
+            _r.nextDouble(),
+            0.4 + _r.nextDouble() * 1.2,
+            _r.nextDouble() * 6.28,
+            0.4 + _r.nextDouble() * 1.8,
+          ]);
+  static final List<List<double>> _clouds = List.generate(
+      5,
+      (_) => [
+            _r.nextDouble(),
+            0.1 + _r.nextDouble() * 0.8,
+            0.18 + _r.nextDouble() * 0.22,
+            0.03 + _r.nextDouble() * 0.04,
+            _r.nextDouble() * 6.28,
+          ]);
 
   @override
   void paint(Canvas canvas, Size size) {
-    final cloudPaint = Paint()
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 60.0);
-    for (var cloud in clouds) {
-      final centerOffset = Offset(cloud.x * size.width, cloud.y * size.height);
-      final baseRadius = cloud.radius * size.width;
-      cloudPaint.color = Colors.grey.withOpacity(cloud.opacity);
-      canvas.drawCircle(centerOffset, baseRadius, cloudPaint);
-      canvas.drawCircle(
-          Offset(centerOffset.dx - baseRadius * 0.6,
-              centerOffset.dy + baseRadius * 0.1),
-          baseRadius * 0.7,
-          cloudPaint);
-      canvas.drawCircle(
-          Offset(centerOffset.dx + baseRadius * 0.7,
-              centerOffset.dy - baseRadius * 0.1),
-          baseRadius * 0.8,
-          cloudPaint);
-      canvas.drawCircle(
-          Offset(centerOffset.dx + baseRadius * 0.2,
-              centerOffset.dy - baseRadius * 0.5),
-          baseRadius * 0.6,
-          cloudPaint);
+    final rect = Offset.zero & size;
+    final bg = Paint()
+      ..shader = const LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [Color(0xFF05080D), Color(0xFF0A131C), Color(0xFF03060A)],
+      ).createShader(rect);
+    canvas.drawRect(rect, bg);
+    final v = t.value;
+    final cp = Paint()..maskFilter = const MaskFilter.blur(BlurStyle.normal, 70);
+    for (final c in _clouds) {
+      final x = ((c[0] + v * c[3] * 3) % 1.25 - 0.12) * size.width;
+      cp.color =
+          Colors.white.withOpacity(0.02 + 0.015 * math.sin(v * 6.28 + c[4]));
+      canvas.drawCircle(Offset(x, c[1] * size.height), c[2] * size.width, cp);
     }
-    final starPaint = Paint()..style = PaintingStyle.fill;
-    for (var star in stars) {
-      double lifeProgress = star.life / star.maxLife;
-      double opacity = math.sin(lifeProgress * math.pi);
-      starPaint.color = Colors.white.withOpacity(opacity);
-      canvas.drawCircle(Offset(star.x * size.width, star.y * size.height),
-          star.radius, starPaint);
+    for (final s in _stars) {
+      final tw = 0.5 +
+          0.5 * math.sin(v * 6.28 * s[4] + s[3]);
+      final p = Paint()..color = Colors.white.withOpacity(0.05 + 0.5 * tw);
+      canvas.drawCircle(Offset(s[0] * size.width, s[1] * size.height), s[2], p);
     }
   }
 
   @override
-  bool shouldRepaint(covariant StarryCloudPainter oldDelegate) => true;
+  bool shouldRepaint(covariant _StarFieldPainter oldDelegate) => false;
 }
+
 
 class _BubbleTime extends StatelessWidget {
   final int ts;
