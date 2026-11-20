@@ -3864,7 +3864,7 @@ class _StarFieldState extends State<_StarField>
   Widget build(BuildContext context) {
     return RepaintBoundary(
       child: CustomPaint(
-        painter: _StarryPainter(_elapsed, _tick),
+        painter: _StarryPainter(() => _elapsed, _tick),
         size: Size.infinite,
       ),
     );
@@ -3872,9 +3872,9 @@ class _StarFieldState extends State<_StarField>
 }
 
 class _StarryPainter extends CustomPainter {
-  _StarryPainter(this.elapsed, Listenable tick) : super(repaint: tick);
+  _StarryPainter(this.clock, Listenable tick) : super(repaint: tick);
 
-  final Duration elapsed;
+  final Duration Function() clock;
 
   static final List<List<double>> _clouds = () {
     final r = math.Random(23);
@@ -3884,7 +3884,7 @@ class _StarryPainter extends CustomPainter {
         0.08 + r.nextDouble() * 0.84,
         0.18 + r.nextDouble() * 0.2,
         0.16 + r.nextDouble() * 0.14,
-        (r.nextBool() ? 1 : -1) * (0.02 + r.nextDouble() * 0.03),
+        (r.nextBool() ? 1 : -1) * (0.06 + r.nextDouble() * 0.07),
       ];
     });
   }();
@@ -3931,7 +3931,8 @@ class _StarryPainter extends CustomPainter {
       ).createShader(rect);
     canvas.drawRect(rect, bg);
 
-    final seconds = elapsed.inMicroseconds / 1000000.0;
+    final el = clock();
+    final seconds = el.inMicroseconds / 1000000.0;
 
     for (final c in _clouds) {
       final x = ((c[0] + c[4] * seconds) % 1.3) - 0.15;
@@ -3948,7 +3949,7 @@ class _StarryPainter extends CustomPainter {
           baseRadius * 0.6, op);
     }
 
-    final frames = elapsed.inMicroseconds / 16666.7;
+    final frames = el.inMicroseconds / 16666.7;
     final starPaint = Paint()..style = PaintingStyle.fill;
     for (var i = 0; i < _stars.length; i++) {
       final s = _stars[i];
