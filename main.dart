@@ -747,7 +747,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       });
 
       final res = await _rpc('initialize', {
-        'cwd': _appDir,
+        'cwd': '/root',
         'provider': 'deepseek-official',
         'model': _model,
         'approvalRequests': false,

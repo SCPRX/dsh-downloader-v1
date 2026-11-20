@@ -467,6 +467,29 @@ class MainActivity : FlutterActivity() {
         }.start()
     }
 
+    private fun patchHarnessLinks() {
+        try {
+            val f = File(
+                rootfsDir,
+                "opt/dsh/node_modules/@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js"
+            )
+            if (!f.exists()) {
+                logEngine("[patch] persistence index.js not found")
+                return
+            }
+            var s = f.readText()
+            if (s.contains("await link(tmp, finalPath);")) {
+                s = s.replace("await link(tmp, finalPath);", "await rename(tmp, finalPath);")
+                f.writeText(s)
+                logEngine("[patch] hardlink->rename applied")
+            } else {
+                logEngine("[patch] already patched")
+            }
+        } catch (t: Throwable) {
+            logEngine("[patch] failed: " + t.message)
+        }
+    }
+
     private fun startSdk(apiKey: String) {
         if (!isEnvReady()) {
             fail("环境还没装好")
@@ -474,6 +497,7 @@ class MainActivity : FlutterActivity() {
         }
         killWeb()
         killSdk()
+        patchHarnessLinks()
 
         Thread {
             try {
@@ -603,6 +627,7 @@ class MainActivity : FlutterActivity() {
             return
         }
         killSdk()
+        patchHarnessLinks()
         if (webServer?.isAlive == true) {
             Thread { awaitReady(webServer) }.start()
             return
