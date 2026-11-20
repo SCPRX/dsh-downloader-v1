@@ -1287,7 +1287,17 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     final web = _web;
     late final Widget child;
     if (web != null) {
-      child = _buildWeb(web);
+      child = PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) {
+          if (didPop) return;
+          setState(() {
+            _web = null;
+            _phase = "chat";
+          });
+        },
+        child: _buildWeb(web),
+      );
     } else {
       switch (_phase) {
         case "setup":
@@ -2895,6 +2905,13 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    _webButton(Icons.close, () {
+                      setState(() {
+                        _web = null;
+                        _phase = "chat";
+                      });
+                    }),
+                    const SizedBox(width: 8),
                     _webButton(Icons.chat_bubble_outline, () async {
                       setState(() {
                         _web = null;
