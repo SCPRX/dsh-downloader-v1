@@ -226,7 +226,12 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
 
       final bool installed = await _ch.invokeMethod<bool>('checkEnv') ?? false;
       if (installed) {
-        await _startWebDefault();
+        setState(() {
+          _phase = "chat";
+          _failed = false;
+          _status = "引擎启动中…";
+        });
+        unawaited(_startEngine());
         return;
       }
       final bool bundled = await _ch.invokeMethod<bool>('hasBundledEnv') ?? false;
@@ -783,7 +788,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
 
   Future<void> _startEngine() async {
     setState(() {
-      _phase = "starting";
+      if (_phase != "chat") _phase = "starting";
       _failed = false;
       _status = "正在启动引擎…";
     });
@@ -827,12 +832,22 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       });
     } catch (e) {
       _startupTimer?.cancel();
-      setState(() {
-        _phase = "starting";
-        _failed = true;
-        _status = "引擎启动失败: $e" +
-            (_nativeFailMsg.isEmpty ? "" : "\n原生: $_nativeFailMsg");
-      });
+      final msg = "引擎启动失败: $e" +
+          (_nativeFailMsg.isEmpty ? "" : "\n原生: $_nativeFailMsg");
+      if (_phase == "chat") {
+        setState(() {
+          _failed = true;
+          _status = msg;
+        });
+        _msgs.add(ChatMsg(msg, false));
+        _scrollToEnd();
+      } else {
+        setState(() {
+          _phase = "starting";
+          _failed = true;
+          _status = msg;
+        });
+      }
       _stopKeepAliveLoop();
       unawaited(_keepAlive(false));
     }
@@ -1048,7 +1063,16 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
 
   Future<void> _send() async {
     final text = _inputCtrl.text.trim();
-    if (text.isEmpty || _sending || !_rpcReady) return;
+    if (text.isEmpty || _sending) return;
+    if (!_rpcReady) {
+      _inputCtrl.clear();
+      setState(() {
+        _msgs.add(ChatMsg(text, true));
+        _msgs.add(ChatMsg("引擎还在启动，请稍等…", false));
+      });
+      _scrollToEnd();
+      return;
+    }
     _inputCtrl.clear();
     setState(() {
       _msgs.add(ChatMsg(text, true));
@@ -1575,6 +1599,34 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                 ],
               ),
             ),
+            if (!_rpcReady)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 2, 16, 4),
+                child: Row(
+                  children: [
+                    const SizedBox(
+                      width: 13,
+                      height: 13,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Color(0xFF00FFCC)),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _status.isEmpty ? "引擎准备中…" : _status,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0x99FFFFFF),
+                          fontSize: 12,
+                          height: 1.4,
+                          decoration: TextDecoration.none,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             Expanded(
               child: ListView.builder(
                 controller: _scrollCtrl,
