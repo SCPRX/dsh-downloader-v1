@@ -172,6 +172,7 @@ class MainActivity : FlutterActivity() {
                 "engineReady" -> result.success(engineReady)
                 "killEngine" -> {
                     killSdk()
+                    engineReady = false
                     result.success(true)
                 }
                 "openEngine" -> {

@@ -2502,6 +2502,33 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     );
   }
 
+  Future<void> _stopGeneration() async {
+    if (!_sending) return;
+    setState(() {
+      _status = "正在停止…";
+      _streamText = "";
+    });
+    try {
+      await _ch.invokeMethod('killEngine');
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() {
+      _rpcReady = false;
+      _sending = false;
+      _chunkSeen = false;
+    });
+    _msgs.add(ChatMsg("已停止当前回答（引擎重启后会话继续）", false, kind: 2));
+    _saveMsgs();
+    _scrollToEnd();
+    try {
+      await _startEngine();
+      try {
+        await _rpc('session/resume', {'sessionId': _sessionId},
+            timeout: const Duration(minutes: 2));
+      } catch (_) {}
+    } catch (_) {}
+  }
+
   Future<void> _regenerate() async {
     String last = "";
     for (final m in _msgs.reversed) {
@@ -3291,6 +3318,14 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                       final canSend = !_sending &&
                           (v.text.trim().isNotEmpty ||
                               _pendingImageB64.isNotEmpty);
+                      if (_sending && v.text.trim().isEmpty) {
+                        return IconButton(
+                          tooltip: "停止回答",
+                          onPressed: _stopGeneration,
+                          icon: const Icon(Icons.stop_circle_outlined,
+                              size: 26, color: Color(0xFFFF8A80)),
+                        );
+                      }
                       return IconButton(
                         onPressed: canSend ? _send : null,
                         icon: Icon(Icons.send,
