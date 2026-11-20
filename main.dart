@@ -3816,12 +3816,15 @@ class _StarFieldState extends State<_StarField>
   Ticker? _ticker;
   Duration _elapsed = Duration.zero;
   final ValueNotifier<int> _tick = ValueNotifier<int>(0);
+  Duration _lastPaint = Duration.zero;
 
   @override
   void initState() {
     super.initState();
     _ticker = createTicker((e) {
       _elapsed = e;
+      if (e - _lastPaint < const Duration(milliseconds: 33)) return;
+      _lastPaint = e;
       _tick.value++;
     })
       ..start();
@@ -3852,13 +3855,13 @@ class _StarryPainter extends CustomPainter {
 
   static final List<List<double>> _clouds = () {
     final r = math.Random(23);
-    return List.generate(6, (_) {
+    return List.generate(6, (i) {
       return [
-        r.nextBool() ? -0.6 : 1.6,
-        r.nextDouble() * 0.8 + 0.1,
-        0.25 + r.nextDouble() * 0.2,
-        0.15 + r.nextDouble() * 0.15,
-        (r.nextBool() ? 1 : -1) * (0.0005 + r.nextDouble() * 0.0005),
+        0.05 + r.nextDouble() * 0.9,
+        0.08 + r.nextDouble() * 0.84,
+        0.18 + r.nextDouble() * 0.2,
+        0.16 + r.nextDouble() * 0.14,
+        (r.nextBool() ? 1 : -1) * (0.02 + r.nextDouble() * 0.03),
       ];
     });
   }();
@@ -3869,7 +3872,7 @@ class _StarryPainter extends CustomPainter {
       return [
         r.nextDouble(),
         r.nextDouble(),
-        0.5 + r.nextDouble() * 1.2,
+        0.6 + r.nextDouble() * 1.3,
         100 + r.nextDouble() * 200,
         r.nextDouble() * 300,
       ];
@@ -3879,6 +3882,19 @@ class _StarryPainter extends CustomPainter {
   double _hash(double a, double b) {
     final s = math.sin(a * 12.9898 + b * 78.233) * 43758.5453;
     return s - s.floorToDouble();
+  }
+
+  void _cloud(Canvas canvas, double cx, double cy, double radius,
+      double opacity) {
+    final rect = Rect.fromCircle(center: Offset(cx, cy), radius: radius);
+    final paint = Paint()
+      ..shader = RadialGradient(
+        colors: [
+          Colors.white.withOpacity(opacity),
+          Colors.white.withOpacity(0.0),
+        ],
+      ).createShader(rect);
+    canvas.drawCircle(Offset(cx, cy), radius, paint);
   }
 
   @override
@@ -3892,31 +3908,24 @@ class _StarryPainter extends CustomPainter {
       ).createShader(rect);
     canvas.drawRect(rect, bg);
 
-    final frames = elapsed.inMicroseconds / 16666.7;
+    final seconds = elapsed.inMicroseconds / 1000000.0;
 
-    final cloudPaint = Paint()
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 60.0);
     for (final c in _clouds) {
-      final x = (c[0] + 1.0 + c[4] * frames) % 3.0;
-      final cx = (x - 1.0) * size.width;
+      final x = ((c[0] + c[4] * seconds) % 1.3) - 0.15;
+      final cx = x * size.width;
       final cy = c[1] * size.height;
       final baseRadius = c[2] * size.width;
-      cloudPaint.color = Colors.grey.withOpacity(c[3]);
-      canvas.drawCircle(Offset(cx, cy), baseRadius, cloudPaint);
-      canvas.drawCircle(
-          Offset(cx - baseRadius * 0.6, cy + baseRadius * 0.1),
-          baseRadius * 0.7,
-          cloudPaint);
-      canvas.drawCircle(
-          Offset(cx + baseRadius * 0.7, cy - baseRadius * 0.1),
-          baseRadius * 0.8,
-          cloudPaint);
-      canvas.drawCircle(
-          Offset(cx + baseRadius * 0.2, cy - baseRadius * 0.5),
-          baseRadius * 0.6,
-          cloudPaint);
+      final op = c[3];
+      _cloud(canvas, cx, cy, baseRadius, op);
+      _cloud(canvas, cx - baseRadius * 0.6, cy + baseRadius * 0.1,
+          baseRadius * 0.7, op);
+      _cloud(canvas, cx + baseRadius * 0.7, cy - baseRadius * 0.1,
+          baseRadius * 0.8, op);
+      _cloud(canvas, cx + baseRadius * 0.2, cy - baseRadius * 0.5,
+          baseRadius * 0.6, op);
     }
 
+    final frames = elapsed.inMicroseconds / 16666.7;
     final starPaint = Paint()..style = PaintingStyle.fill;
     for (var i = 0; i < _stars.length; i++) {
       final s = _stars[i];
@@ -3925,11 +3934,12 @@ class _StarryPainter extends CustomPainter {
       final k = (cycle / maxLife).floorToDouble();
       final opacity = math.sin((cycle % maxLife) / maxLife * math.pi);
       if (opacity <= 0.02) continue;
-      final hx = _hash(i.toDouble(), k);
-      final hy = _hash(i.toDouble() + 0.5, k);
       starPaint.color = Colors.white.withOpacity(opacity);
       canvas.drawCircle(
-          Offset(hx * size.width, hy * size.height), s[2], starPaint);
+          Offset(_hash(i.toDouble(), k) * size.width,
+              _hash(i.toDouble() + 0.5, k) * size.height),
+          s[2],
+          starPaint);
     }
   }
 
