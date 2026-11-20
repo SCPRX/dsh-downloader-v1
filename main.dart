@@ -118,6 +118,9 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   String _sessionQuery = "";
   String _fsPath = "/root";
   List<FileSystemEntity> _fsEntries = [];
+  final TextEditingController _termCtrl = TextEditingController();
+  String _termOut = "";
+  bool _termBusy = false;
   bool _fsLoading = false;
   bool _msgsLoaded = false;
   String _streamText = "";
@@ -1293,6 +1296,9 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
         case "files":
           child = _buildFiles();
           break;
+        case "term":
+          child = _buildTerm();
+          break;
         default:
           child = _buildChat();
       }
@@ -1737,6 +1743,118 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     return "约 ${(chars * 0.7).round()} tokens · $chars 字";
   }
 
+  Future<void> _runShellCmd(String cmd) async {
+    if (cmd.trim().isEmpty || _termBusy) return;
+    _termCtrl.clear();
+    setState(() {
+      _termBusy = true;
+      _termOut += "\n\$ $cmd\n";
+    });
+    try {
+      final out = await _ch.invokeMethod<String>('runShell', {'cmd': cmd});
+      if (!mounted) return;
+      setState(() => _termOut += (out ?? "") );
+    } catch (e) {
+      if (mounted) setState(() => _termOut += "执行失败: $e\n");
+    } finally {
+      if (mounted) setState(() => _termBusy = false);
+    }
+  }
+
+  Widget _buildTerm() {
+    return Container(
+      color: Colors.black,
+      child: SafeArea(
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(6, 8, 16, 4),
+              child: Row(
+                children: [
+                  IconButton(
+                    onPressed: () => setState(() => _phase = "chat"),
+                    icon: const Icon(Icons.arrow_back,
+                        size: 20, color: Colors.white70),
+                  ),
+                  const Text("终端",
+                      style: TextStyle(color: Colors.white, fontSize: 15)),
+                  const Spacer(),
+                  TextButton(
+                    onPressed: () => setState(() => _termOut = ""),
+                    child: const Text("清屏",
+                        style: TextStyle(
+                            color: Colors.white38, fontSize: 12)),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: SelectableText(
+                  _termOut.isEmpty
+                      ? "输入命令，例如：ls -la /root\n（在本地 Linux 环境 /root 下执行）"
+                      : _termOut,
+                  style: const TextStyle(
+                      color: Color(0xFF9EF0DE),
+                      fontSize: 12,
+                      height: 1.45,
+                      fontFamily: 'monospace'),
+                ),
+              ),
+            ),
+            if (_termBusy)
+              const Padding(
+                padding: EdgeInsets.only(bottom: 4),
+                child: SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Color(0xFF00FFCC))),
+              ),
+            Container(
+              padding: const EdgeInsets.fromLTRB(10, 4, 10, 10),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _termCtrl,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontFamily: 'monospace'),
+                      onSubmitted: _runShellCmd,
+                      decoration: InputDecoration(
+                        hintText: "输入命令…",
+                        hintStyle: const TextStyle(
+                            color: Colors.white30, fontSize: 13),
+                        filled: true,
+                        fillColor: const Color(0xFF101820),
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 12),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide.none,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  IconButton(
+                    onPressed:
+                        _termBusy ? null : () => _runShellCmd(_termCtrl.text),
+                    icon: const Icon(Icons.keyboard_return,
+                        color: Color(0xFF00FFCC)),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   String get _fsRootHost => "$_appDir/dsh-env/rootfs";
 
   Future<void> _loadFiles() async {
@@ -1811,15 +1929,76 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
         actions: [
           TextButton(
             onPressed: () {
-              Clipboard.setData(ClipboardData(text: e.path.substring(_fsRootHost.length)));
+              Navigator.pop(ctx);
+              _editTextFile(f, name);
+            },
+            child: const Text("编辑",
+                style: TextStyle(color: Color(0xCC00FFCC))),
+          ),
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(
+                  text: e.path.substring(_fsRootHost.length)));
               Navigator.pop(ctx);
             },
             child: const Text("复制路径",
-                style: TextStyle(color: Color(0xCC00FFCC))),
+                style: TextStyle(color: Color(0xCCEEEEEE))),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx),
             child: const Text("关闭", style: TextStyle(color: Colors.white54)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _editTextFile(File f, String name) {
+    String content;
+    try {
+      content = f.readAsStringSync();
+    } catch (_) {
+      content = "";
+    }
+    final ctrl = TextEditingController(text: content);
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF0B1220),
+        title: Text("编辑 $name",
+            style: const TextStyle(color: Colors.white, fontSize: 14)),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: 380,
+          child: TextField(
+            controller: ctrl,
+            maxLines: null,
+            expands: true,
+            style: const TextStyle(
+                color: Colors.white70,
+                fontSize: 11,
+                height: 1.4,
+                fontFamily: 'monospace'),
+            decoration: const InputDecoration(border: InputBorder.none),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("取消", style: TextStyle(color: Colors.white54)),
+          ),
+          TextButton(
+            onPressed: () {
+              try {
+                f.writeAsStringSync(ctrl.text);
+                ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+                  const SnackBar(content: Text("已保存")),
+                );
+              } catch (_) {}
+              Navigator.pop(ctx);
+            },
+            child: const Text("保存",
+                style: TextStyle(color: Color(0xFF00FFCC))),
           ),
         ],
       ),
@@ -1984,9 +2163,19 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       b.writeln(m.text);
     }
     Clipboard.setData(ClipboardData(text: b.toString()));
+    String saved = "";
+    try {
+      final dir = Directory("$_appDir/dsh-env/rootfs/root/exports");
+      dir.createSync(recursive: true);
+      final ts = DateTime.now().millisecondsSinceEpoch;
+      final f = File("${dir.path}/luchui-$ts.md");
+      f.writeAsStringSync(b.toString());
+      saved = "，已保存到 /root/exports/${f.uri.pathSegments.last}";
+    } catch (_) {}
     ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-      const SnackBar(
-          content: Text("已复制为 Markdown"), duration: Duration(seconds: 1)),
+      SnackBar(
+          content: Text("已复制为 Markdown$saved"),
+          duration: const Duration(seconds: 2)),
     );
   }
 
@@ -2309,6 +2498,17 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                   ),
                 ],
               ),
+            ),
+            ListTile(
+              dense: true,
+              leading: const Icon(Icons.terminal,
+                  size: 20, color: Color(0xCC00FFCC)),
+              title: const Text("终端",
+                  style: TextStyle(color: Colors.white, fontSize: 14)),
+              onTap: () {
+                Navigator.pop(context);
+                setState(() => _phase = "term");
+              },
             ),
             ListTile(
               dense: true,

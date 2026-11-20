@@ -100,6 +100,13 @@ class MainActivity : FlutterActivity() {
                 }
                 "readEngineLog" -> result.success(readEngineLog())
                 "hasBundledEnv" -> result.success(hasBundledEnv())
+                "runShell" -> {
+                    val cmd = call.argument<String>("cmd") ?: ""
+                    Thread {
+                        val out = runShell(cmd)
+                        mainHandler.post { result.success(out) }
+                    }.start()
+                }
                 "installBundledEnv" -> {
                     installBundledEnv()
                     result.success(true)
@@ -234,6 +241,55 @@ class MainActivity : FlutterActivity() {
 
     private fun isEnvReady(): Boolean =
         prootBin.exists() && loaderBin.exists() && guestNode.exists() && guestHarness.exists()
+
+    private fun runShell(cmd: String): String {
+        if (!isEnvReady()) return "环境还没装好"
+        return try {
+            val safe = cmd.replace("'", "'\\''")
+            val full = "cd '${workDir.absolutePath}' && " +
+                "export LD_LIBRARY_PATH='${envDir.absolutePath}/lib' && " +
+                "export PROOT_LOADER='${envDir.absolutePath}/loader' && " +
+                "export PROOT_LOADER_32='${envDir.absolutePath}/loader32' && " +
+                "export PROOT_NO_SECCOMP=1 && " +
+                "mkdir -p '${filesDir.absolutePath}/proot-tmp' && " +
+                "export PROOT_TMP_DIR='${filesDir.absolutePath}/proot-tmp' && " +
+                "exec '${prootBin.absolutePath}' -0 -r '${rootfsDir.absolutePath}' " +
+                "-b /dev -b /proc -b /sys -b /system -L -w /root " +
+                "/usr/bin/env HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin " +
+                "/bin/bash -lc '$safe'"
+            val p = ProcessBuilder("/system/bin/sh", "-c", full)
+                .directory(workDir)
+                .redirectErrorStream(true)
+                .start()
+            val sb = StringBuilder()
+            val reader = BufferedReader(InputStreamReader(p.inputStream))
+            var line = reader.readLine()
+            while (line != null) {
+                sb.append(line).append("\n")
+                if (sb.length > 20000) {
+                    sb.append("…(输出过长已截断)\n")
+                    break
+                }
+                line = reader.readLine()
+            }
+            try {
+                reader.close()
+            } catch (_: Throwable) {
+            }
+            var waited = 0
+            while (p.isAlive && waited < 90) {
+                Thread.sleep(200)
+                waited += 1
+            }
+            if (p.isAlive) {
+                p.destroy()
+                sb.append("\n(超时，已终止)")
+            }
+            sb.toString()
+        } catch (t: Throwable) {
+            "执行失败: " + t.message
+        }
+    }
 
     private fun hasBundledEnv(): Boolean = try {
         assets.open("runtime.zip").use { true }
