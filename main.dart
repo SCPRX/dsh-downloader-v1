@@ -142,6 +142,12 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
             _failed = true;
             _status = call.arguments as String;
           });
+          if (_phase == "chat") {
+            setState(() {
+              _msgs.add(ChatMsg(call.arguments as String, false));
+            });
+            _scrollToEnd();
+          }
           _stopKeepAliveLoop();
           unawaited(_keepAlive(false));
           break;
@@ -220,26 +226,30 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   }
 
   Future<void> _bootstrap() async {
+    setState(() {
+      _phase = "chat";
+      _failed = false;
+      _status = "正在检查环境…";
+    });
     try {
       _appDir = (await _ch.invokeMethod<String>('filesDirPath')) ?? "";
       await _loadSettings();
-
+      if (_apiKey.isEmpty) {
+        setState(() {
+          _phase = "setup";
+          _failed = false;
+          _status = "需要填一次 API Key";
+        });
+        return;
+      }
       final bool installed = await _ch.invokeMethod<bool>('checkEnv') ?? false;
       if (installed) {
-        setState(() {
-          _phase = "chat";
-          _failed = false;
-          _status = "引擎启动中…";
-        });
         unawaited(_startEngine());
         return;
       }
       final bool bundled = await _ch.invokeMethod<bool>('hasBundledEnv') ?? false;
       if (bundled) {
-        setState(() {
-          _phase = "env";
-          _status = "正在安装内置环境…";
-        });
+        setState(() => _status = "正在安装内置环境…");
         _startKeepAliveLoop(text: "正在安装内置环境，请勿清理后台…");
         await _ch.invokeMethod('installBundledEnv');
         return;
@@ -253,53 +263,10 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
         _failed = true;
         _status = "启动失败: $e";
       });
-    }
-  }
-
-  Future<void> _applyHarnessPatches() async {
-    final base =
-        "$_appDir/dsh-env/rootfs/opt/dsh/node_modules/@deepseek-ai/";
-    const repo =
-        'https://raw.githubusercontent.com/SCPRX/dsh-downloader-v1/main/patches/';
-    const mirror =
-        'https://ghfast.top/https://raw.githubusercontent.com/SCPRX/dsh-downloader-v1/main/patches/';
-    final jobs = <List<String>>[
-      [
-        'dsh-session-persistence-jsonl__index.js',
-        "${base}dsh-session-persistence-jsonl/lib/index.js"
-      ],
-      [
-        'dsh-attachment-local__index.js',
-        "${base}dsh-attachment-local/lib/index.js"
-      ],
-    ];
-    for (final job in jobs) {
-      List<int>? bytes;
-      final cache = File("$_appDir/harness_patches/${job[0]}");
-      try {
-        if (await cache.exists() && await cache.length() > 1000) {
-          bytes = await cache.readAsBytes();
-        } else {
-          for (final u in [repo + job[0], mirror + job[0]]) {
-            try {
-              final r =
-                  await http.get(Uri.parse(u)).timeout(const Duration(seconds: 30));
-              if (r.statusCode == 200 && r.bodyBytes.length > 1000) {
-                bytes = r.bodyBytes;
-                await cache.parent.create(recursive: true);
-                await cache.writeAsBytes(bytes);
-                break;
-              }
-            } catch (_) {}
-          }
-        }
-      } catch (_) {}
-      if (bytes == null) continue;
-      try {
-        final f = File(job[1]);
-        await f.parent.create(recursive: true);
-        await f.writeAsBytes(bytes, flush: true);
-      } catch (_) {}
+      if (_phase == "chat") {
+        _msgs.add(ChatMsg("启动失败: $e", false));
+        _scrollToEnd();
+      }
     }
   }
 
@@ -424,7 +391,6 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   Future<void> _downloadEnv() async {
     final String? zipPath = await _ch.invokeMethod<String>('envZipPath');
     if (zipPath == null || zipPath.isEmpty) throw '拿不到安装包路径';
-    setState(() => _phase = 'env');
     while (true) {
       try {
         await _download(zipPath);
@@ -1599,6 +1565,19 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                 ],
               ),
             ),
+            if ((_downloading || (_progress > 0 && _progress < 1)) && !_rpcReady)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: LinearProgressIndicator(
+                    value: _progress > 0 ? _progress : null,
+                    minHeight: 4,
+                    backgroundColor: Colors.white10,
+                    color: const Color(0xFF00FFCC),
+                  ),
+                ),
+              ),
             if (!_rpcReady)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 2, 16, 4),
