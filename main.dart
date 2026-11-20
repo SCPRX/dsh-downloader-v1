@@ -3193,6 +3193,43 @@ class _AppRootState extends State<AppRoot> {
             ),
             ListTile(
               dense: true,
+              leading: const Icon(Icons.settings_outlined,
+                  size: 20, color: Colors.white54),
+              title: const Text("设置",
+                  style: TextStyle(color: Colors.white, fontSize: 14)),
+              onTap: () {
+                Navigator.pop(context);
+                setState(() {
+                  _phase = "setup";
+                  _failed = false;
+                  _status = "修改设置";
+                });
+              },
+            ),
+            ListTile(
+              dense: true,
+              leading: const Icon(Icons.article_outlined,
+                  size: 20, color: Colors.white54),
+              title: const Text("引擎日志",
+                  style: TextStyle(color: Colors.white, fontSize: 14)),
+              onTap: () {
+                Navigator.pop(context);
+                _showEngineLog();
+              },
+            ),
+            ListTile(
+              dense: true,
+              leading: const Icon(Icons.public,
+                  size: 20, color: Colors.white54),
+              title: const Text("网页版",
+                  style: TextStyle(color: Colors.white, fontSize: 14)),
+              onTap: () {
+                Navigator.pop(context);
+                unawaited(_switchToWeb());
+              },
+            ),
+            ListTile(
+              dense: true,
               leading: const Icon(Icons.folder_open,
                   size: 20, color: Color(0xCC00FFCC)),
               title: const Text("工作区文件",
@@ -3300,7 +3337,7 @@ class _AppRootState extends State<AppRoot> {
         child: Column(
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(6, 6, 6, 2),
+              padding: const EdgeInsets.fromLTRB(6, 6, 10, 2),
               child: Row(
                 children: [
                   Builder(
@@ -3344,17 +3381,6 @@ class _AppRootState extends State<AppRoot> {
                       ],
                     ),
                   ),
-                  _headerIcon(Icons.add_comment_outlined, "新建对话", _newChat),
-                  _headerIcon(Icons.settings_outlined, "设置", () {
-                    setState(() {
-                      _phase = "setup";
-                      _failed = false;
-                      _status = "修改设置";
-                    });
-                  }),
-                  _headerIcon(Icons.article_outlined, "引擎日志", _showEngineLog),
-                  _headerIcon(Icons.public, "网页版", _switchToWeb,
-                      color: const Color(0xFF00FFCC)),
                 ],
               ),
             ),
@@ -3574,53 +3600,20 @@ class _AppRootState extends State<AppRoot> {
                   ],
                 ),
               ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 2),
-              child: Row(
-                children: [
-                  InkWell(
-                    onTap: _pickModel,
-                    borderRadius: BorderRadius.circular(10),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 9, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF0E1A22),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: const Color(0x2200FFCC)),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(Icons.memory,
-                              size: 11, color: Color(0xAA00FFCC)),
-                          const SizedBox(width: 4),
-                          Text(
-                            _model == "deepseek-v4-pro" ? "V4 Pro" : "Flash",
-                            style: const TextStyle(
-                                color: Color(0xCC00FFCC), fontSize: 10.5),
-                          ),
-                          const Icon(Icons.expand_more,
-                              size: 12, color: Color(0x8800FFCC)),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const Spacer(),
-                  if (_ctxText.isNotEmpty)
-                    Flexible(
-                      child: Text(_ctxText,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          textAlign: TextAlign.right,
-                          style: const TextStyle(
-                              color: Color(0x44FFFFFF),
-                              fontSize: 10,
-                              decoration: TextDecoration.none)),
-                    ),
-                ],
+            if (_ctxText.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(right: 18, bottom: 2),
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: Text(_ctxText,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: Color(0x44FFFFFF),
+                          fontSize: 10,
+                          decoration: TextDecoration.none)),
+                ),
               ),
-            ),
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
               child: Row(
