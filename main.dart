@@ -2130,9 +2130,13 @@ class _AppRootState extends State<AppRoot> {
   }
 
   Widget _buildTerm() {
-    return Container(
-      color: Colors.black,
-      child: SafeArea(
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        const _StarField(),
+        Container(
+          color: const Color(0xB303060A),
+          child: SafeArea(
         child: Column(
           children: [
             Padding(
@@ -2220,6 +2224,8 @@ class _AppRootState extends State<AppRoot> {
           ],
         ),
       ),
+        ),
+      ],
     );
   }
 
@@ -2374,13 +2380,23 @@ class _AppRootState extends State<AppRoot> {
   }
 
   Widget _buildFiles() {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        const _StarField(),
+        _buildFilesBody(),
+      ],
+    );
+  }
+
+  Widget _buildFilesBody() {
     final parent = _fsPath == "/"
         ? "/"
         : _fsPath.substring(0, _fsPath.lastIndexOf("/") == 0
             ? 1
             : _fsPath.lastIndexOf("/"));
     return Container(
-      color: const Color(0xFF03060A),
+      color: const Color(0xB803060A),
       child: SafeArea(
         child: Column(
           children: [
@@ -3072,7 +3088,12 @@ class _AppRootState extends State<AppRoot> {
   Widget _buildDrawer() {
     return Drawer(
       backgroundColor: const Color(0xFF0A1018),
-      child: SafeArea(
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          const _StarField(),
+          Container(color: const Color(0xB80A1018)),
+          SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -3200,6 +3221,8 @@ class _AppRootState extends State<AppRoot> {
             ),
           ],
         ),
+          ),
+        ],
       ),
     );
   }
