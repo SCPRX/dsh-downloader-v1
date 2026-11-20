@@ -14,6 +14,8 @@ jobs:
         mkdir -p lib assets
         cp main.dart lib/main.dart
         cp icons/logo.png assets/logo.png
+        mkdir -p assets/patches
+        cp patches/*.js assets/patches/
         cp MainActivity.kt android/app/src/main/kotlin/com/dsh/dshapp/MainActivity.kt
         for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
           test -f "icons/ic_launcher-$d.png" || { echo "missing icons/ic_launcher-$d.png"; exit 1; }

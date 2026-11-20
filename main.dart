@@ -241,6 +241,29 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     }
   }
 
+  Future<void> _applyHarnessPatches() async {
+    final base =
+        "$_appDir/dsh-env/rootfs/opt/dsh/node_modules/@deepseek-ai/";
+    final jobs = <List<String>>[
+      [
+        'assets/patches/dsh-session-persistence-jsonl__index.js',
+        "${base}dsh-session-persistence-jsonl/lib/index.js"
+      ],
+      [
+        'assets/patches/dsh-attachment-local__index.js',
+        "${base}dsh-attachment-local/lib/index.js"
+      ],
+    ];
+    for (final job in jobs) {
+      try {
+        final data = await rootBundle.load(job[0]);
+        final f = File(job[1]);
+        await f.parent.create(recursive: true);
+        await f.writeAsBytes(data.buffer.asUint8List(), flush: true);
+      } catch (_) {}
+    }
+  }
+
   Future<void> _startWebDefault() async {
     if (!mounted) return;
     if (_apiKey.isEmpty) {
@@ -251,6 +274,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       });
       return;
     }
+    await _applyHarnessPatches();
     await _switchToWeb();
   }
 
@@ -261,6 +285,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     } catch (_) {
       return;
     }
+    await _applyHarnessPatches();
     if (_apiKey.isEmpty) {
       setState(() {
         _phase = "setup";
