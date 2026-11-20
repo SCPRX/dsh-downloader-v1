@@ -98,19 +98,6 @@ class MainActivity : FlutterActivity() {
                         result.success(true)
                     }
                 }
-                "installLibs" -> {
-                    val libsPath = call.argument<String>("path")
-                    if (libsPath.isNullOrBlank()) {
-                        result.error("BAD_PATH", "path is empty", null)
-                    } else {
-                        installLibs(File(libsPath))
-                        result.success(true)
-                    }
-                }
-                "repairLinks" -> {
-                    repairLinks()
-                    result.success(true)
-                }
                 "readEngineLog" -> result.success(readEngineLog())
                 "hasBundledEnv" -> result.success(hasBundledEnv())
                 "installBundledEnv" -> {
@@ -415,95 +402,7 @@ class MainActivity : FlutterActivity() {
                 fail("解压失败: ${t.message}（坏包已删除，请重试）")
             }
         }.start()
-    }
-
-    private fun installLibs(zipFile: File) {
-        Thread {
-            try {
-                if (!zipFile.exists()) {
-                    fail("找不到运行库补丁包")
-                    return@Thread
-                }
-                status("正在安装运行库...")
-                val buf = ByteArray(64 * 1024)
-                val root = envDir.canonicalPath
-                ZipInputStream(FileInputStream(zipFile)).use { z ->
-                    while (true) {
-                        val e = z.nextEntry ?: break
-                        val f = File(envDir, e.name)
-                        if (!f.canonicalPath.startsWith(root + File.separator) &&
-                            f.canonicalPath != root
-                        ) {
-                            continue
-                        }
-                        if (e.isDirectory) {
-                            f.mkdirs()
-                            continue
-                        }
-                        f.parentFile?.mkdirs()
-                        FileOutputStream(f).use { o ->
-                            var n = z.read(buf)
-                            while (n > 0) {
-                                o.write(buf, 0, n)
-                                n = z.read(buf)
-                            }
-                        }
-                    }
-                }
-                zipFile.delete()
-                status("运行库安装完成")
-                notifyEvent("libsReady", null)
-            } catch (t: Throwable) {
-                fail("运行库安装失败: ${t.message}")
-            }
-        }.start()
-    }
-
-    private fun repairLinks() {
-        Thread {
-            val marker = File(envDir, ".links-ok")
-            if (marker.exists()) {
-                notifyEvent("linksReady", null)
-                return@Thread
-            }
-            try {
-                status("正在修复运行环境…")
-                val linkLike = Regex("^[.]{0,2}/?[A-Za-z0-9@._+/-]+$")
-                var fixed = 0
-                if (android.os.Build.VERSION.SDK_INT >= 26) {
-                    envDir.walkTopDown().forEach { f ->
-                        try {
-                            if (!f.isFile) return@forEach
-                            val len = f.length()
-                            if (len < 1L || len > 300L) return@forEach
-                            val content = f.readText().trim()
-                            if (content.isEmpty() || content.length > 300) return@forEach
-                            if (content.contains('\n') || !linkLike.matches(content)) {
-                                return@forEach
-                            }
-                            val t = File(f.parentFile, content)
-                            if (!t.exists()) return@forEach
-                            if (t.canonicalPath == f.canonicalPath) return@forEach
-                            f.delete()
-                            java.nio.file.Files.createSymbolicLink(
-                                f.toPath(),
-                                java.nio.file.Paths.get(content)
-                            )
-                            fixed++
-                        } catch (_: Throwable) {
-                        }
-                    }
-                }
-                marker.writeText("ok")
-                status("环境修复完成，共 $fixed 个链接")
-            } catch (t: Throwable) {
-                status("环境修复出错: ${t.message}")
-            }
-            notifyEvent("linksReady", null)
-        }.start()
-    }
-
-    private fun patchOneFile(f: File, pairs: List<Pair<String, String>>) {
+    }    private fun patchOneFile(f: File, pairs: List<Pair<String, String>>) {
         try {
             if (!f.exists()) {
                 logEngine("[patch] missing: " + f.absolutePath)

@@ -64,10 +64,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   static const List<String> _envNames = ['高速镜像', '极速镜像', '官方源'];
 
   static const int _envSize = 207615322;
-  int? _pinnedSrc;
   int _runId = 0;
-  int _activeSrc = -1;
-  int get _selectedSrc => _pinnedSrc ?? (_activeSrc >= 0 ? _activeSrc : -1);
   bool _downloading = false;
   String _speed = "";
   String _curName = "";
@@ -78,10 +75,6 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   Timer? _startupTimer;
   String _keepAliveText = "正在准备环境，请勿清理后台…";
 
-  static const String _libsUrl =
-      'https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/runtime-libs.zip';
-  Completer<void>? _libsDone;
-  Completer<void>? _linksDone;
 
   static const List<String> _models = ['deepseek-flash', 'deepseek-v4-pro'];
   bool _testing = false;
@@ -154,16 +147,6 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
           break;
         case 'envReady':
           _afterEnvReady();
-          break;
-        case 'libsReady':
-          if (_libsDone != null && !_libsDone!.isCompleted) {
-            _libsDone!.complete();
-          }
-          break;
-        case 'linksReady':
-          if (_linksDone != null && !_linksDone!.isCompleted) {
-            _linksDone!.complete();
-          }
           break;
         case 'rpcLine':
           _onRpcLine(call.arguments as String);
@@ -270,29 +253,8 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
         _scrollToEnd();
       }
     }
-  }
-
-  Future<void> _startWebDefault() async {
+  }  Future<void> _afterEnvReady() async {
     if (!mounted) return;
-    if (_apiKey.isEmpty) {
-      setState(() {
-        _phase = "setup";
-        _failed = false;
-        _status = "需要填一次 API Key";
-      });
-      return;
-    }
-    await _applyHarnessPatches();
-    await _switchToWeb();
-  }
-
-  Future<void> _afterEnvReady() async {
-    if (!mounted) return;
-    try {
-      await _ensureLibs();
-    } catch (_) {
-      return;
-    }
     await _applyHarnessPatches();
     if (_apiKey.isEmpty) {
       setState(() {
@@ -323,51 +285,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       } catch (_) {}
     }
     await _startEngine();
-  }
-
-  Future<void> _ensureLibs() async {
-    final guestNode = File("$_appDir/dsh-env/rootfs/opt/node/bin/node");
-    if (await guestNode.exists()) return;
-
-    setState(() {
-      _phase = "starting";
-      _failed = false;
-      _status = "首次运行，正在下载运行库(约 17MB)...";
-    });
-    try {
-      final zip = File("${Directory.systemTemp.path}/runtime-libs.zip");
-      if (await zip.exists()) await zip.delete();
-      final resp = await http
-          .get(Uri.parse(_libsUrl))
-          .timeout(const Duration(minutes: 5));
-      if (resp.statusCode != 200) {
-        throw '下载失败 HTTP ${resp.statusCode}';
-      }
-      await zip.writeAsBytes(resp.bodyBytes);
-
-      setState(() => _status = "正在安装运行库...");
-      _libsDone = Completer<void>();
-      await _ch.invokeMethod('installLibs', {'path': zip.path});
-      await _libsDone!.future.timeout(const Duration(minutes: 3));
-      setState(() => _status = "运行库就绪");
-    } catch (e) {
-      setState(() {
-        _failed = true;
-        _status = "运行库下载失败: $e";
-      });
-      rethrow;
-    }
-  }
-
-  Future<void> _repairLinks() async {
-    _linksDone = Completer<void>();
-    await _ch.invokeMethod('repairLinks');
-    try {
-      await _linksDone!.future.timeout(const Duration(minutes: 5));
-    } catch (_) {}
-  }
-
-  File get _settingsFile => File("$_appDir/native_chat_settings.json");
+  }  File get _settingsFile => File("$_appDir/native_chat_settings.json");
 
   File get _msgsFile => File("$_appDir/native_chat_messages.json");
 
@@ -480,19 +398,14 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
 
     final runId = _runId;
     _downloading = true;
-    if (_pinnedSrc == null) {
-      if (_srcBps.isEmpty) await _testSources();
-    }
-    final order = _pinnedSrc != null
-        ? <int>[_pinnedSrc!]
-        : <int>[for (int i = 0; i < _envUrls.length; i++) i]
+    if (_srcBps.isEmpty) await _testSources();
+    final order = <int>[for (int i = 0; i < _envUrls.length; i++) i]
       ..sort((a, b) => (_srcBps[b] ?? -1).compareTo(_srcBps[a] ?? -1));
 
     Object? lastError;
     try {
       for (final i in order) {
         if (runId != _runId) throw _SwitchRequested();
-        _activeSrc = i;
         setState(() {
           _speed = "";
           _curName = _envNames[i];
@@ -500,12 +413,10 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
         try {
           await _downloadFrom(i, runId, part, start: start);
           lastError = null;
-          _srcInfo[i] = "✓ 可用";
           break;
         } catch (e) {
           lastError = e;
           if (await part.exists()) start = await part.length();
-          _srcInfo[i] = "$e";
           final next = order.indexOf(i) + 1;
           if (next < order.length && mounted) {
             setState(() => _status =
@@ -529,7 +440,6 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       await part.rename(zip.path);
     } finally {
       _downloading = false;
-      _activeSrc = -1;
     }
   }
 
@@ -586,7 +496,6 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
               _progress = (received / totalBytes).clamp(0.0, 1.0).toDouble();
               _speed = _speedText(bps);
               _curName = _envNames[index];
-              _srcInfo[index] = _speed;
               _status = "下载中 ${_mb(received)} / ${_mb(totalBytes)}";
             });
           }
@@ -674,106 +583,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     } finally {
       client.close();
     }
-  }
-
-  void _autoRetest() {
-    _pinnedSrc = null;
-    _srcBps.clear();
-    _srcInfo.clear();
-    _runId++;
-    setState(() {
-      _failed = false;
-      _speed = "";
-      _curName = "";
-      _status = "正在重新测速...";
-    });
-    if (!_downloading) unawaited(_bootstrap());
-  }
-
-  void _switchSource(int i) {
-    _pinnedSrc = i;
-    _runId++;
-    setState(() {
-      _failed = false;
-      _speed = "";
-      _status = "切换到 ${_envNames[i]} 下载...";
-    });
-    if (!_downloading) unawaited(_bootstrap());
-  }
-
-  void _showSourceSheet() {
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: const Color(0xFF0B1220),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (ctx) => _SourceSheet(this),
-    );
-  }
-
-  Widget buildSourceSheetContent(BuildContext ctx) {
-    return SafeArea(
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(20, 14, 20, 4),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text("选择下载源",
-                    style: TextStyle(color: Colors.white70, fontSize: 13)),
-              ),
-            ),
-            ListTile(
-              contentPadding: const EdgeInsets.symmetric(horizontal: 20),
-              leading: const SizedBox(
-                  width: 24,
-                  child:
-                      Icon(Icons.speed, size: 20, color: Color(0xFF00FFCC))),
-              title: const Text("自动测速",
-                  style: TextStyle(color: Colors.white)),
-              trailing: _selectedSrc == -1
-                  ? const Icon(Icons.check_circle, color: Color(0xFF00FFCC))
-                  : null,
-              onTap: () {
-                Navigator.pop(ctx);
-                _autoRetest();
-              },
-            ),
-            for (int i = 0; i < _envNames.length; i++)
-              ListTile(
-                contentPadding: const EdgeInsets.symmetric(horizontal: 20),
-                leading: const SizedBox(
-                    width: 24,
-                    child: Icon(Icons.link,
-                        size: 20, color: Color(0xCC00FFCC))),
-                title: Text(_envNames[i],
-                    style: const TextStyle(color: Colors.white)),
-                subtitle: Text(
-                    (_srcInfo[i] == null || _srcInfo[i]!.isEmpty)
-                        ? "未测"
-                        : _srcInfo[i]!,
-                    style: const TextStyle(
-                        color: Colors.white38, fontSize: 12)),
-                trailing: _selectedSrc == i
-                    ? const Icon(Icons.check_circle,
-                        color: Color(0xFF00FFCC))
-                    : null,
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _switchSource(i);
-                },
-              ),
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _keepAlive(bool on) async {
+  }  Future<void> _keepAlive(bool on) async {
     try {
       await _ch.invokeMethod('keepAlive', {
         'on': on,
@@ -1180,200 +990,9 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       case "setup":
         return _buildSetup();
       default:
-        return _buildSplash();
+        return _buildChat();
     }
-  }
-
-  Widget _buildSplash() {
-    final size = MediaQuery.sizeOf(context);
-    final landscape = size.width > size.height;
-    final short = math.min(size.width, size.height);
-    final s = (short / 400).clamp(0.85, 1.5);
-    final pad = 20 * s;
-    final avail = math.max(size.width - pad * 2, 200.0);
-    final logo = (short * 0.22).clamp(64.0, 110.0);
-    final logoW = logo * 1.5;
-    final gap = 24 * s;
-    double textW = avail - logoW - gap;
-    final sideBySide = landscape || textW >= 150 * s;
-    if (!sideBySide) textW = avail;
-    final showBar = _progress > 0 || _downloading;
-
-    final texts = SizedBox(
-      width: textW,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _CenterText("落锤",
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 20 * s,
-                height: 1.3,
-                letterSpacing: 4 * s,
-                fontWeight: FontWeight.w600,
-              )),
-          SizedBox(height: 8 * s),
-          _CenterText("DeepSeek Harness",
-              style: TextStyle(
-                color: const Color(0x66FFFFFF),
-                fontSize: 11.5 * s,
-                height: 1.4,
-                letterSpacing: 1 * s,
-              )),
-          SizedBox(height: 26 * s),
-          if (showBar) ...[
-            ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: LinearProgressIndicator(
-                value: _progress > 0 ? _progress : null,
-                minHeight: 5,
-                backgroundColor: Colors.white10,
-                color: const Color(0xFF00FFCC),
-              ),
-            ),
-            SizedBox(height: 14 * s),
-          ],
-          _CenterText(_status,
-              style: TextStyle(
-                color: const Color(0xCCFFFFFF),
-                fontSize: 13 * s,
-                height: 1.6,
-                letterSpacing: 0.6 * s,
-              )),
-          if (_downloading && _curName.isNotEmpty) ...[
-            SizedBox(height: 8 * s),
-            _CenterText(
-                "$_curName · ${_speed.isEmpty ? "连接中…" : _speed}",
-                style: TextStyle(
-                  color: const Color(0x80FFFFFF),
-                  fontSize: 12 * s,
-                  height: 1.5,
-                )),
-          ],
-          SizedBox(height: 10 * s),
-          if (!_failed)
-            _CenterText("首次启动需要准备运行环境，请耐心等待",
-                style: TextStyle(
-                  color: const Color(0x40FFFFFF),
-                  fontSize: 11 * s,
-                  height: 1.5,
-                )),
-          if (_failed) ...[
-            SizedBox(height: 8 * s),
-            _ActionButton(label: "重试", primary: true, onTap: _bootstrap),
-            SizedBox(height: 10 * s),
-            Wrap(
-              alignment: WrapAlignment.center,
-              spacing: 10 * s,
-              runSpacing: 8 * s,
-              children: [
-                _ActionButton(
-                    label: "查看引擎日志", primary: false, onTap: _showEngineLog),
-                _ActionButton(
-                    label: "网页版", primary: false, onTap: _switchToWeb),
-              ],
-            ),
-          ],
-          if (_downloading || _failed) ...[
-            SizedBox(height: 14 * s),
-            _ActionButton(label: "换源", primary: false, onTap: _showSourceSheet),
-          ],
-        ],
-      ),
-    );
-
-    final logoBox = Container(
-      width: logoW,
-      height: logoW,
-      decoration: const BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: RadialGradient(
-          colors: [Color(0x3300FFCC), Color(0x0000FFCC)],
-          stops: [0.30, 1.0],
-        ),
-      ),
-      alignment: Alignment.center,
-      child: SizedBox(
-        width: logo,
-        height: logo,
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            Image.asset('assets/logo.png',
-                width: logo,
-                height: logo,
-                fit: BoxFit.contain,
-                color: Colors.white,
-                colorBlendMode: BlendMode.srcIn),
-            if (showBar)
-              SizedBox(
-                width: logo + 14,
-                height: logo + 14,
-                child: CircularProgressIndicator(
-                  value: _progress > 0 ? _progress : null,
-                  strokeWidth: 2.2,
-                  backgroundColor: Colors.white10,
-                  color: const Color(0xFF00FFCC),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-
-    final content = sideBySide
-        ? Row(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              logoBox,
-              SizedBox(width: gap),
-              texts,
-            ],
-          )
-        : Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              logoBox,
-              SizedBox(height: 18 * s),
-              texts,
-            ],
-          );
-
-    return Container(
-      color: const Color(0xFF03060A),
-      child: Stack(
-        children: [
-          Positioned.fill(
-            child: CustomPaint(painter: StarryCloudPainter(_clouds, _stars)),
-          ),
-          SafeArea(
-            child: LayoutBuilder(
-              builder: (ctx, c) => SingleChildScrollView(
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(minHeight: c.maxHeight),
-                  child: Padding(
-                    padding: EdgeInsets.symmetric(
-                      horizontal: pad,
-                      vertical: 16 * s,
-                    ),
-                    child: Center(
-                      child: ConstrainedBox(
-                        constraints: BoxConstraints(maxWidth: avail),
-                        child: content,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSetup() {
+  }  Widget _buildSetup() {
     final currentModel = _models.contains(_modelCtrl.text.trim())
         ? _modelCtrl.text.trim()
         : _models.first;
@@ -1846,39 +1465,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       ),
     );
   }
-}
-
-class _SourceSheet extends StatefulWidget {
-  final _AppRootState host;
-  const _SourceSheet(this.host);
-
-  @override
-  State<_SourceSheet> createState() => _SourceSheetState();
-}
-
-class _SourceSheetState extends State<_SourceSheet> {
-  Timer? _timer;
-
-  @override
-  void initState() {
-    super.initState();
-    _timer = Timer.periodic(const Duration(milliseconds: 400), (_) {
-      if (mounted) setState(() {});
-    });
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) =>
-      widget.host.buildSourceSheetContent(context);
-}
-
-class _LeftText extends StatelessWidget {
+}class _LeftText extends StatelessWidget {
   final String text;
   final TextStyle style;
   const _LeftText(this.text, {required this.style});
@@ -1946,56 +1533,7 @@ class _ActionButton extends StatelessWidget {
       ),
     );
   }
-}
-
-class _StatusBadge extends StatelessWidget {
-  final String text;
-  const _StatusBadge(this.text);
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      constraints: const BoxConstraints(maxWidth: 320),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
-      decoration: BoxDecoration(
-        color: const Color(0x99101A24),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: const Color(0x3300FFCC), width: 1),
-        boxShadow: const [
-          BoxShadow(color: Color(0x1A00FFCC), blurRadius: 22, spreadRadius: 1),
-        ],
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const SizedBox(
-            width: 13,
-            height: 13,
-            child: CircularProgressIndicator(
-              strokeWidth: 1.8,
-              color: Color(0xFF00FFCC),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Flexible(
-            child: _CenterText(
-              text,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 13.2,
-                height: 1.45,
-                letterSpacing: 0.2,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _CenterText extends StatelessWidget {
+}class _CenterText extends StatelessWidget {
   final String text;
   final TextStyle style;
   const _CenterText(this.text, {required this.style});
