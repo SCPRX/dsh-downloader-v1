@@ -102,6 +102,7 @@ class _AppRootState extends State<AppRoot> {
   String _engineLog = "";
   bool _showKey = false;
   double _textScale = 1.0;
+  double _cloudSpeed = 0.04;
   String _lastSessionId = "";
   String _balance = "";
   bool _balanceLoading = false;
@@ -341,6 +342,7 @@ class _AppRootState extends State<AppRoot> {
           _apiKey = (m['apiKey'] ?? "").toString();
           _model = (m['model'] ?? "deepseek-flash").toString();
           _textScale = (m['textScale'] as num?)?.toDouble() ?? 1.0;
+          _cloudSpeed = (m['cloudSpeed'] as num?)?.toDouble() ?? 0.04;
           _lastSessionId = (m['sessionKey'] ?? "").toString();
           _reasoning = (m['reasoning'] ?? "auto").toString();
           _workDir = (m['workDir'] ?? "/root").toString();
@@ -357,6 +359,7 @@ class _AppRootState extends State<AppRoot> {
         'apiKey': _apiKey,
         'model': _model,
         'textScale': _textScale,
+        'cloudSpeed': _cloudSpeed,
         'sessionKey': _sessionKey,
         'reasoning': _reasoning,
         'workDir': _workDir,
@@ -1345,7 +1348,7 @@ class _AppRootState extends State<AppRoot> {
       child: Stack(
         children: [
           Positioned.fill(
-            child: const _StarField(),
+            child: _StarField(speed: _cloudSpeed),
           ),
           SafeArea(
             child: Column(
@@ -1643,6 +1646,41 @@ class _AppRootState extends State<AppRoot> {
                                           unawaited(_saveSettings());
                                         },
                                       ),
+                                    ),
+                                ],
+                              ),
+                              const SizedBox(height: 14),
+                              const Text("星空云速度",
+                                  style: TextStyle(
+                                      color: Colors.white, fontSize: 14)),
+                              const SizedBox(height: 8),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: [
+                                  for (final item in const [
+                                    ["慢", 0.02],
+                                    ["中", 0.04],
+                                    ["快", 0.08],
+                                  ])
+                                    ChoiceChip(
+                                      label: Text(item[0] as String,
+                                          style: TextStyle(
+                                              fontSize: 12,
+                                              color: (_cloudSpeed ==
+                                                      (item[1] as double))
+                                                  ? const Color(0xFF03211D)
+                                                  : Colors.white70)),
+                                      selected:
+                                          _cloudSpeed == (item[1] as double),
+                                      selectedColor: const Color(0xFF00FFCC),
+                                      backgroundColor:
+                                          const Color(0xFF15202B),
+                                      onSelected: (_) {
+                                        setState(() => _cloudSpeed =
+                                            item[1] as double);
+                                        unawaited(_saveSettings());
+                                      },
                                     ),
                                 ],
                               ),
@@ -2133,7 +2171,7 @@ class _AppRootState extends State<AppRoot> {
     return Stack(
       fit: StackFit.expand,
       children: [
-        const _StarField(),
+        _StarField(speed: _cloudSpeed),
         Container(
           color: const Color(0xB303060A),
           child: SafeArea(
@@ -2383,7 +2421,7 @@ class _AppRootState extends State<AppRoot> {
     return Stack(
       fit: StackFit.expand,
       children: [
-        const _StarField(),
+        _StarField(speed: _cloudSpeed),
         _buildFilesBody(),
       ],
     );
@@ -3091,7 +3129,7 @@ class _AppRootState extends State<AppRoot> {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          const _StarField(),
+          _StarField(speed: _cloudSpeed),
           Container(color: const Color(0xB80A1018)),
           SafeArea(
         child: Column(
@@ -3251,7 +3289,7 @@ class _AppRootState extends State<AppRoot> {
       body: Stack(
         fit: StackFit.expand,
         children: [
-          const _StarField(),
+          _StarField(speed: _cloudSpeed),
           SafeArea(
         child: Column(
           children: [
@@ -3828,7 +3866,8 @@ class _TextDrawPainter extends CustomPainter {
 }
 
 class _StarField extends StatefulWidget {
-  const _StarField();
+  final double speed;
+  const _StarField({this.speed = 0.04});
 
   @override
   State<_StarField> createState() => _StarFieldState();
@@ -3864,7 +3903,7 @@ class _StarFieldState extends State<_StarField>
   Widget build(BuildContext context) {
     return RepaintBoundary(
       child: CustomPaint(
-        painter: _StarryPainter(() => _elapsed, _tick),
+        painter: _StarryPainter(() => _elapsed, _tick, widget.speed),
         size: Size.infinite,
       ),
     );
@@ -3872,9 +3911,11 @@ class _StarFieldState extends State<_StarField>
 }
 
 class _StarryPainter extends CustomPainter {
-  _StarryPainter(this.clock, Listenable tick) : super(repaint: tick);
+  _StarryPainter(this.clock, Listenable tick, this.speed)
+      : super(repaint: tick);
 
   final Duration Function() clock;
+  final double speed;
 
   static final List<List<double>> _clouds = () {
     final r = math.Random(23);
@@ -3935,7 +3976,7 @@ class _StarryPainter extends CustomPainter {
     final seconds = el.inMicroseconds / 1000000.0;
 
     for (final c in _clouds) {
-      final x = ((c[0] + c[4] * seconds) % 1.3) - 0.15;
+      final x = ((c[0] + (c[4] < 0 ? -speed : speed) * seconds) % 1.3) - 0.15;
       final cx = x * size.width;
       final cy = c[1] * size.height;
       final baseRadius = c[2] * size.width;
