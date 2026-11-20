@@ -112,6 +112,11 @@ class MainActivity : FlutterActivity() {
                     result.success(true)
                 }
                 "readEngineLog" -> result.success(readEngineLog())
+                "hasBundledEnv" -> result.success(hasBundledEnv())
+                "installBundledEnv" -> {
+                    installBundledEnv()
+                    result.success(true)
+                }
                 "startSdk" -> {
                     val apiKey = call.argument<String>("apiKey") ?: ""
                     startSdk(apiKey)
@@ -242,6 +247,37 @@ class MainActivity : FlutterActivity() {
 
     private fun isEnvReady(): Boolean =
         prootBin.exists() && loaderBin.exists() && guestNode.exists() && guestHarness.exists()
+
+    private fun hasBundledEnv(): Boolean = try {
+        assets.open("runtime.zip").use { true }
+    } catch (_: Throwable) {
+        false
+    }
+
+    private fun installBundledEnv() {
+        Thread {
+            try {
+                val zip = File(cacheDir, "env_data.zip")
+                status("正在安装内置环境…")
+                assets.open("runtime.zip").use { input ->
+                    FileOutputStream(zip).use { out ->
+                        val buf = ByteArray(256 * 1024)
+                        var n = input.read(buf)
+                        var total = 0L
+                        while (n > 0) {
+                            out.write(buf, 0, n)
+                            total += n
+                            n = input.read(buf)
+                        }
+                        logEngine("[bundle] copied " + total + " bytes")
+                    }
+                }
+                extractEnv(zip)
+            } catch (t: Throwable) {
+                fail("内置环境安装失败: " + t.message)
+            }
+        }.start()
+    }
 
     private fun extractEnv(zipFile: File) {
         Thread {

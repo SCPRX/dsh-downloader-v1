@@ -229,6 +229,16 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
         await _startWebDefault();
         return;
       }
+      final bool bundled = await _ch.invokeMethod<bool>('hasBundledEnv') ?? false;
+      if (bundled) {
+        setState(() {
+          _phase = "env";
+          _status = "正在安装内置环境…";
+        });
+        _startKeepAliveLoop(text: "正在安装内置环境，请勿清理后台…");
+        await _ch.invokeMethod('installBundledEnv');
+        return;
+      }
       await _downloadEnv();
     } catch (e) {
       _downloading = false;

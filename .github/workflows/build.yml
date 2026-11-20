@@ -9,9 +9,24 @@ jobs:
       with: { java-version: '17', distribution: 'temurin' }
     - uses: subosito/flutter-action@v2
       with: { channel: 'stable' }
+    - name: Fetch runtime bundle
+      run: |
+        mkdir -p /tmp/dl
+        ok=0
+        for u in \
+          https://ghfast.top/https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/apk.zip \
+          https://gh-proxy.com/https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/apk.zip \
+          https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/apk.zip ; do
+          curl -fL --retry 3 -o /tmp/dl/runtime.zip "$u" && ok=1 && break
+        done
+        test "$ok" = "1"
+        ls -l /tmp/dl/runtime.zip
     - name: Build
       run: |
         mkdir -p lib assets
+        mkdir -p android/app/src/main/assets
+        cp /tmp/dl/runtime.zip android/app/src/main/assets/runtime.zip
+        ls -l android/app/src/main/assets/runtime.zip
         cp main.dart lib/main.dart
         cp icons/logo.png assets/logo.png
         mkdir -p assets/patches
