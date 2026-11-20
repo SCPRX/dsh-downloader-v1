@@ -123,6 +123,9 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   bool _termBusy = false;
   String _pendingImageB64 = "";
   String _pendingImageMime = "";
+  String _reasoning = "auto";
+  String _workDir = "/root";
+  String _queuedText = "";
   bool _fsLoading = false;
   bool _msgsLoaded = false;
   String _streamText = "";
@@ -377,6 +380,8 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
           _model = (m['model'] ?? "deepseek-flash").toString();
           _textScale = (m['textScale'] as num?)?.toDouble() ?? 1.0;
           _lastSessionId = (m['sessionKey'] ?? "").toString();
+          _reasoning = (m['reasoning'] ?? "auto").toString();
+          _workDir = (m['workDir'] ?? "/root").toString();
         }
       }
     } catch (_) {}
@@ -391,6 +396,8 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
         'model': _model,
         'textScale': _textScale,
         'sessionKey': _sessionKey,
+        'reasoning': _reasoning,
+        'workDir': _workDir,
       }));
     } catch (_) {}
   }
@@ -809,12 +816,15 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
         'model': _model,
       });
 
-      final res = await _rpc('initialize', {
-        'cwd': '/root',
+      final initParams = <String, dynamic>{
+        'cwd': _workDir,
         'provider': 'deepseek-official',
         'model': _model,
         'approvalRequests': true,
-      }, timeout: const Duration(minutes: 15));
+      };
+      if (_reasoning != 'auto') initParams['reasoningEffort'] = _reasoning;
+      final res = await _rpc('initialize', initParams,
+          timeout: const Duration(minutes: 15));
       if (res == null) throw '引擎没有响应';
       _rpcReady = true;
       _sessionId = 's${DateTime.now().millisecondsSinceEpoch}';
@@ -1096,6 +1106,14 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
         });
         _saveMsgs();
         _scrollToEnd();
+        if (_queuedText.isNotEmpty) {
+          final q = _queuedText;
+          _queuedText = "";
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _inputCtrl.text = q;
+            unawaited(_send());
+          });
+        }
       }
     } else if (method == 'session.status') {
     } else if (method == 'session.query.completed') {
@@ -1173,7 +1191,19 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   Future<void> _send() async {
     final text = _inputCtrl.text.trim();
     final hasImage = _pendingImageB64.isNotEmpty;
-    if ((text.isEmpty && !hasImage) || _sending) return;
+    if (text.isEmpty && !hasImage) return;
+    if (_sending && !hasImage) {
+      _inputCtrl.clear();
+      setState(() {
+        _queuedText = text;
+        _msgs.add(ChatMsg(text, true));
+        _msgs.add(ChatMsg("已排队，等这条回复完自动发送", false, kind: 2));
+      });
+      _saveMsgs();
+      _scrollToEnd();
+      return;
+    }
+    if (_sending) return;
     if (!hasImage && text.startsWith("/")) {
       _inputCtrl.clear();
       _handleSlash(text);
@@ -1478,6 +1508,36 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                               ),
                               Row(
                                 children: [
+                                  const Text("思考深度",
+                                      style: TextStyle(
+                                          color: Color(0x99FFFFFF),
+                                          fontSize: 13)),
+                                  const SizedBox(width: 10),
+                                  for (final r in const ["auto", "low", "medium", "high"])
+                                    Padding(
+                                      padding: const EdgeInsets.only(right: 6),
+                                      child: ChoiceChip(
+                                        label: Text(r,
+                                            style: TextStyle(
+                                                fontSize: 11,
+                                                color: _reasoning == r
+                                                    ? const Color(0xFF03211D)
+                                                    : Colors.white70)),
+                                        selected: _reasoning == r,
+                                        selectedColor: const Color(0xFF00FFCC),
+                                        backgroundColor:
+                                            const Color(0xFF15202B),
+                                        onSelected: (_) {
+                                          setState(() => _reasoning = r);
+                                          unawaited(_saveSettings());
+                                          _engineRestartHint();
+                                        },
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              Row(
+                                children: [
                                   TextButton.icon(
                                     onPressed: _testing ? null : _testKey,
                                     icon: _testing
@@ -1633,6 +1693,45 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                                 height: 1.5),
                           ),
                         ),
+                        sectionTitle("引擎"),
+                        Container(
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0E141B),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: const Color(0x18FFFFFF)),
+                          ),
+                          child: Column(
+                            children: [
+                              ListTile(
+                                dense: true,
+                                leading: const Icon(Icons.work_outline,
+                                    size: 20, color: Colors.white54),
+                                title: const Text("工作目录",
+                                    style: TextStyle(
+                                        color: Colors.white, fontSize: 14)),
+                                subtitle: Text(_workDir,
+                                    style: const TextStyle(
+                                        color: Colors.white38, fontSize: 11)),
+                                trailing: const Icon(Icons.chevron_right,
+                                    size: 18, color: Colors.white30),
+                                onTap: _pickWorkDir,
+                              ),
+                              ListTile(
+                                dense: true,
+                                leading: const Icon(Icons.restart_alt,
+                                    size: 20, color: Color(0xFFFF8A80)),
+                                title: const Text("重置引擎环境",
+                                    style: TextStyle(
+                                        color: Color(0xFFFF8A80),
+                                        fontSize: 14)),
+                                subtitle: const Text("删除运行环境并重新安装",
+                                    style: TextStyle(
+                                        color: Colors.white24, fontSize: 11)),
+                                onTap: _resetEnv,
+                              ),
+                            ],
+                          ),
+                        ),
                         sectionTitle("会话"),
                         Container(
                           decoration: BoxDecoration(
@@ -1698,6 +1797,15 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                                     style: TextStyle(
                                         color: Colors.white, fontSize: 14)),
                                 onTap: _showEngineLog,
+                              ),
+                              ListTile(
+                                dense: true,
+                                leading: const Icon(Icons.share_outlined,
+                                    size: 20, color: Colors.white54),
+                                title: const Text("分享当前对话",
+                                    style: TextStyle(
+                                        color: Colors.white, fontSize: 14)),
+                                onTap: _shareConversation,
                               ),
                               ListTile(
                                 dense: true,
@@ -1771,6 +1879,128 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     final chars = _ctxChars;
     if (chars == 0) return "";
     return "约 ${(chars * 0.7).round()} tokens · $chars 字";
+  }
+
+  void _shareConversation() {
+    final b = StringBuffer();
+    b.writeln("# 落锤对话 - ${_curTitle}");
+    for (final m in _msgs) {
+      b.writeln();
+      b.writeln(m.mine ? "我：" : "AI：");
+      b.writeln(m.text);
+    }
+    unawaited(_ch.invokeMethod('shareText', {'text': b.toString()}));
+  }
+
+  Future<void> _resetEnv() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF0B1220),
+        title: const Text("重置引擎环境？",
+            style: TextStyle(color: Colors.white, fontSize: 15)),
+        content: const Text(
+            "会删除已解压的运行环境并重新安装；聊天记录保留。",
+            style: TextStyle(color: Colors.white70, fontSize: 13)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text("取消", style: TextStyle(color: Colors.white54)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text("重置",
+                style: TextStyle(color: Color(0xFFFF8A80))),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    setState(() {
+      _phase = "chat";
+      _status = "正在重置环境…";
+      _rpcReady = false;
+    });
+    try {
+      await _ch.invokeMethod('resetEnv');
+    } catch (_) {}
+    await _bootstrap();
+  }
+
+  void _pickWorkDir() {
+    final dirs = <String>[];
+    void walk(Directory dir, int depth) {
+      if (depth > 2) return;
+      try {
+        for (final e in dir.listSync(followLinks: false)) {
+          if (e is Directory) {
+            final rel = e.path.substring(_fsRootHost.length);
+            if (rel.startsWith("/root/.dsh") ||
+                rel.startsWith("/root/dsh-env")) {
+              continue;
+            }
+            dirs.add(rel);
+            if (dirs.length >= 200) return;
+            walk(e, depth + 1);
+          }
+        }
+      } catch (_) {}
+    }
+
+    walk(Directory("$_fsRootHost/root"), 0);
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF0D1620),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.all(14),
+              child: Text("选择工作目录（重启引擎生效）",
+                  style: TextStyle(color: Colors.white70, fontSize: 13)),
+            ),
+            ListTile(
+              dense: true,
+              leading: const Icon(Icons.home_outlined,
+                  size: 20, color: Color(0xFF00FFCC)),
+              title: Text("/root",
+                  style: const TextStyle(color: Colors.white, fontSize: 13)),
+              onTap: () {
+                Navigator.pop(ctx);
+                setState(() => _workDir = "/root");
+                unawaited(_saveSettings());
+                _engineRestartHint();
+              },
+            ),
+            SizedBox(
+              height: 320,
+              child: ListView(
+                children: [
+                  for (final p in dirs.take(200))
+                    ListTile(
+                      dense: true,
+                      leading: const Icon(Icons.folder_outlined,
+                          size: 18, color: Colors.white54),
+                      title: Text(p,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              color: Colors.white, fontSize: 12.5)),
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        setState(() => _workDir = p);
+                        unawaited(_saveSettings());
+                        _engineRestartHint();
+                      },
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _attachImage() async {

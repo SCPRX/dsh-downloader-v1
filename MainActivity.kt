@@ -102,6 +102,30 @@ class MainActivity : FlutterActivity() {
                 }
                 "readEngineLog" -> result.success(readEngineLog())
                 "hasBundledEnv" -> result.success(hasBundledEnv())
+                "shareText" -> {
+                    val text = call.argument<String>("text") ?: ""
+                    try {
+                        val i = Intent(Intent.ACTION_SEND)
+                        i.type = "text/plain"
+                        i.putExtra(Intent.EXTRA_TEXT, text)
+                        startActivity(Intent.createChooser(i, "分享对话"))
+                        result.success(true)
+                    } catch (t: Throwable) {
+                        result.error("SHARE_FAIL", t.message, null)
+                    }
+                }
+                "resetEnv" -> {
+                    try {
+                        killSdk()
+                        killWeb()
+                        webServer?.destroy()
+                        if (envDir.exists()) envDir.deleteRecursively()
+                        logEngine("[reset] env removed")
+                        result.success(true)
+                    } catch (t: Throwable) {
+                        result.error("RESET_FAIL", t.message, null)
+                    }
+                }
                 "pickImage" -> {
                     pendingPick = result
                     try {
