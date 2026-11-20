@@ -48,7 +48,8 @@ class ChatSession {
 class ChatMsg {
   final String text;
   final bool mine;
-  ChatMsg(this.text, this.mine);
+  final int kind;
+  ChatMsg(this.text, this.mine, {this.kind = 0});
 }
 
 class AppRoot extends StatefulWidget {
@@ -108,6 +109,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   List<ChatMsg> _msgs = [];
   final List<ChatSession> _sessions = [];
   String _sessionKey = "";
+  String _sessionQuery = "";
   bool _msgsLoaded = false;
   String _streamText = "";
   bool _sending = false;
@@ -775,7 +777,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
         'cwd': '/root',
         'provider': 'deepseek-official',
         'model': _model,
-        'approvalRequests': false,
+        'approvalRequests': true,
       }, timeout: const Duration(minutes: 15));
       if (res == null) throw '引擎没有响应';
       _rpcReady = true;
@@ -850,6 +852,55 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     );
   }
 
+  Future<void> _sendRaw(Map<String, dynamic> msg) async {
+    try {
+      await _ch.invokeMethod('rpcSend', {'line': jsonEncode(msg)});
+    } catch (_) {}
+  }
+
+  Future<void> _showApproval(Map<String, dynamic> params, dynamic id) async {
+    final tool = (params['toolName'] ?? params['tool'] ?? "工具").toString();
+    final reason = (params['reason'] ?? "").toString();
+    bool allow = false;
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF0B1220),
+        title: const Text("引擎请求执行工具",
+            style: TextStyle(color: Colors.white, fontSize: 15)),
+        content: Text(
+          "$tool${reason.isEmpty ? "" : "\n\n$reason"}",
+          style: const TextStyle(
+              color: Colors.white70, fontSize: 13, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              allow = false;
+              Navigator.pop(ctx);
+            },
+            child: const Text("拒绝", style: TextStyle(color: Colors.white54)),
+          ),
+          TextButton(
+            onPressed: () {
+              allow = true;
+              Navigator.pop(ctx);
+            },
+            child: const Text("允许一次",
+                style: TextStyle(color: Color(0xFF00FFCC))),
+          ),
+        ],
+      ),
+    );
+    await _sendRaw({
+      'jsonrpc': '2.0',
+      'id': id,
+      'result': {'outcome': allow ? 'allowed-once' : 'rejected'},
+    });
+  }
+
   Future<Map<String, dynamic>?> _rpc(String method, Map<String, dynamic> params,
       {Duration timeout = const Duration(seconds: 60)}) async {
     if (!mounted) return null;
@@ -884,6 +935,29 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       if (decoded is! Map) return;
       m = decoded.cast<String, dynamic>();
     } catch (_) {
+      return;
+    }
+
+    if (m.containsKey('id') && m['method'] != null) {
+      final method = m['method'];
+      final p = (m['params'] is Map)
+          ? (m['params'] as Map).cast<String, dynamic>()
+          : <String, dynamic>{};
+      if (method == 'approval/request') {
+        unawaited(_showApproval(p, m['id']));
+      } else if (method == 'user-question/ask') {
+        unawaited(_sendRaw({
+          'jsonrpc': '2.0',
+          'id': m['id'],
+          'result': {'cancelled': true},
+        }));
+      } else {
+        unawaited(_sendRaw({
+          'jsonrpc': '2.0',
+          'id': m['id'],
+          'error': {'code': -32601, 'message': 'not supported'},
+        }));
+      }
       return;
     }
 
@@ -944,6 +1018,37 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
         });
         _saveMsgs();
         _scrollToEnd();
+      } else if (type == 'tool/call') {
+        final name = (data is Map
+                ? (data['toolName'] ?? data['name'] ?? data['tool'])
+                : null)
+            ?.toString() ??
+            "tool";
+        final input = data is Map
+            ? (data['input'] ?? data['arguments'] ?? data['params'])
+            : null;
+        final brief = input == null ? "" : _clip(_textOf(input), 160);
+        setState(() {
+          _msgs.add(ChatMsg("🔧 $name${brief.isEmpty ? "" : "\n$brief"}",
+              false,
+              kind: 1));
+        });
+        _saveMsgs();
+        _scrollToEnd();
+      } else if (type == 'tool/result') {
+        final ok = data is Map ? (data['ok'] ?? data['success']) : null;
+        final out = data is Map
+            ? (data['result'] ?? data['output'] ?? data['content'])
+            : null;
+        final brief = _clip(_textOf(out), 260);
+        setState(() {
+          _msgs.add(ChatMsg(
+              "${ok == false ? "✗" : "✓"} 结果${brief.isEmpty ? "" : "\n$brief"}",
+              false,
+              kind: 2));
+        });
+        _saveMsgs();
+        _scrollToEnd();
       } else if (type == 'turn/end') {
         setState(() {
           if (_streamText.isNotEmpty) {
@@ -972,6 +1077,11 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       });
       _scrollToEnd();
     }
+  }
+
+  String _clip(String s, int n) {
+    if (s.length <= n) return s;
+    return s.substring(0, n) + "…";
   }
 
   String _messageText(dynamic data) {
@@ -1483,6 +1593,108 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     }
   }
 
+  List<ChatSession> get _filteredSessions {
+    final q = _sessionQuery.trim().toLowerCase();
+    if (q.isEmpty) return _sessions;
+    return [
+      for (final s in _sessions)
+        if (s.title.toLowerCase().contains(q)) s
+    ];
+  }
+
+  void _renameSession(ChatSession s) {
+    final ctrl = TextEditingController(text: s.title);
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF0B1220),
+        title: const Text("重命名会话",
+            style: TextStyle(color: Colors.white, fontSize: 15)),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          style: const TextStyle(color: Colors.white),
+          decoration: const InputDecoration(hintText: "会话名称"),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("取消", style: TextStyle(color: Colors.white54)),
+          ),
+          TextButton(
+            onPressed: () {
+              final name = ctrl.text.trim();
+              if (name.isNotEmpty) {
+                setState(() => s.title = name);
+                _saveSessions();
+              }
+              Navigator.pop(ctx);
+            },
+            child: const Text("保存",
+                style: TextStyle(color: Color(0xFF00FFCC))),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _copySession(ChatSession s) {
+    final b = StringBuffer();
+    for (final m in s.msgs) {
+      b.write(m.mine ? "我：" : "AI：");
+      b.writeln(m.text);
+    }
+    Clipboard.setData(ClipboardData(text: b.toString()));
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      const SnackBar(
+          content: Text("对话已复制"), duration: Duration(milliseconds: 900)),
+    );
+  }
+
+  void _sessionMenu(ChatSession s) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF0D1620),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.edit_outlined,
+                  size: 20, color: Colors.white70),
+              title: const Text("重命名",
+                  style: TextStyle(color: Colors.white, fontSize: 14)),
+              onTap: () {
+                Navigator.pop(ctx);
+                _renameSession(s);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.copy_all_outlined,
+                  size: 20, color: Colors.white70),
+              title: const Text("复制整段对话",
+                  style: TextStyle(color: Colors.white, fontSize: 14)),
+              onTap: () {
+                Navigator.pop(ctx);
+                _copySession(s);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline,
+                  size: 20, color: Color(0xFFFF8A80)),
+              title: const Text("删除会话",
+                  style: TextStyle(color: Color(0xFFFF8A80), fontSize: 14)),
+              onTap: () {
+                Navigator.pop(ctx);
+                _deleteSession(s.id);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   String get _curTitle {
     for (final s in _sessions) {
       if (s.id == _sessionKey) return s.title;
@@ -1522,11 +1734,33 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
               ),
             ),
             const Divider(height: 1, color: Color(0x22FFFFFF)),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 4),
+              child: TextField(
+                onChanged: (v) => setState(() => _sessionQuery = v),
+                style: const TextStyle(color: Colors.white, fontSize: 13),
+                decoration: InputDecoration(
+                  hintText: "搜索会话",
+                  hintStyle:
+                      const TextStyle(color: Colors.white30, fontSize: 13),
+                  prefixIcon: const Icon(Icons.search,
+                      size: 18, color: Colors.white30),
+                  isDense: true,
+                  filled: true,
+                  fillColor: const Color(0xFF101A24),
+                  contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+            ),
             Expanded(
               child: ListView.builder(
-                itemCount: _sessions.length,
+                itemCount: _filteredSessions.length,
                 itemBuilder: (ctx, i) {
-                  final s = _sessions[i];
+                  final s = _filteredSessions[i];
                   final selected = s.id == _sessionKey;
                   return ListTile(
                     dense: true,
@@ -1551,6 +1785,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                           size: 18, color: Colors.white30),
                       onPressed: () => _deleteSession(s.id),
                     ),
+                    onLongPress: () => _sessionMenu(s),
                     onTap: () {
                       Navigator.pop(context);
                       _switchSession(s.id);
@@ -1746,37 +1981,19 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                       alignment: mine
                           ? Alignment.centerRight
                           : Alignment.centerLeft,
-                      child: Container(
-                        constraints: BoxConstraints(
-                          maxWidth: MediaQuery.sizeOf(context).width * 0.82,
-                        ),
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 10),
-                        decoration: BoxDecoration(
-                          color: mine
-                              ? const Color(0xFF14524A)
-                              : const Color(0xFF141A22),
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                        child: GestureDetector(
-                          onLongPress: () {
-                            Clipboard.setData(ClipboardData(text: text));
-                            ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-                              const SnackBar(
-                                content: Text("已复制"),
-                                duration: Duration(milliseconds: 900),
-                              ),
-                            );
-                          },
-                          child: Text(text,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 15,
-                                height: 1.5,
-                                decoration: none,
-                                decorationColor: Colors.transparent,
-                              )),
-                        ),
+                      child: _Bubble(
+                        text: text,
+                        mine: mine,
+                        kind: isStream ? 0 : _msgs[i].kind,
+                        onLongPress: () {
+                          Clipboard.setData(ClipboardData(text: text));
+                          ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+                            const SnackBar(
+                              content: Text("已复制"),
+                              duration: Duration(milliseconds: 900),
+                            ),
+                          );
+                        },
                       ),
                     ),
                   );
@@ -2074,4 +2291,163 @@ class StarryCloudPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant StarryCloudPainter oldDelegate) => true;
+}
+
+class _Bubble extends StatelessWidget {
+  final String text;
+  final bool mine;
+  final int kind;
+  final VoidCallback onLongPress;
+  const _Bubble({
+    required this.text,
+    required this.mine,
+    required this.kind,
+    required this.onLongPress,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final maxW = MediaQuery.sizeOf(context).width * 0.86;
+    if (kind == 1 || kind == 2) {
+      final isCall = kind == 1;
+      return GestureDetector(
+        onLongPress: onLongPress,
+        child: Container(
+          constraints: BoxConstraints(maxWidth: maxW),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          decoration: BoxDecoration(
+            color: const Color(0xFF0D1620),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+                color: isCall ? const Color(0x3300FFCC) : const Color(0x22FFFFFF)),
+          ),
+          child: Text(
+            text,
+            style: TextStyle(
+              color: isCall ? const Color(0xCC00FFCC) : const Color(0x99FFFFFF),
+              fontSize: 12.5,
+              height: 1.45,
+              fontFamily: 'monospace',
+              decoration: TextDecoration.none,
+              decorationColor: Colors.transparent,
+            ),
+          ),
+        ),
+      );
+    }
+    return GestureDetector(
+      onLongPress: onLongPress,
+      child: Container(
+        constraints: BoxConstraints(maxWidth: maxW),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color:
+              mine ? const Color(0xFF14524A) : const Color(0xFF141A22),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: _MarkdownBody(text: text),
+      ),
+    );
+  }
+}
+
+class _MarkdownBody extends StatelessWidget {
+  final String text;
+  const _MarkdownBody({required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    final parts = <Widget>[];
+    final re = RegExp(r'```([a-zA-Z0-9_+-]*)\n([\s\S]*?)```');
+    int cursor = 0;
+    for (final m in re.allMatches(text)) {
+      if (m.start > cursor) {
+        final t = text.substring(cursor, m.start);
+        if (t.trim().isNotEmpty) parts.add(_plain(t.trimRight()));
+      }
+      final code = (m.group(2) ?? "").trimRight();
+      parts.add(_codeBlock(context, code));
+      cursor = m.end;
+    }
+    if (cursor < text.length) {
+      final t = text.substring(cursor);
+      if (t.trim().isNotEmpty) parts.add(_plain(t.trim()));
+    }
+    if (parts.isEmpty) parts.add(_plain(text));
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (int i = 0; i < parts.length; i++) ...[
+          if (i > 0) const SizedBox(height: 8),
+          parts[i],
+        ],
+      ],
+    );
+  }
+
+  Widget _plain(String t) => Text(
+        t,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 15,
+          height: 1.5,
+          decoration: TextDecoration.none,
+          decorationColor: Colors.transparent,
+        ),
+      );
+
+  Widget _codeBlock(BuildContext context, String code) {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF080D13),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0x22FFFFFF)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const SizedBox(width: 10),
+              const Icon(Icons.code, size: 14, color: Color(0x88FFFFFF)),
+              const Spacer(),
+              InkWell(
+                onTap: () {
+                  Clipboard.setData(ClipboardData(text: code));
+                  ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+                    const SnackBar(
+                      content: Text("代码已复制"),
+                      duration: Duration(milliseconds: 900),
+                    ),
+                  );
+                },
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  child: Text("复制",
+                      style: TextStyle(
+                          color: Color(0xCC00FFCC), fontSize: 11)),
+                ),
+              ),
+            ],
+          ),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+            child: Text(
+              code,
+              style: const TextStyle(
+                color: Color(0xFFDDEFEA),
+                fontSize: 12.5,
+                height: 1.45,
+                fontFamily: 'monospace',
+                decoration: TextDecoration.none,
+                decorationColor: Colors.transparent,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
