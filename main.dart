@@ -44,7 +44,9 @@ class ChatSession {
   String title;
   final List<ChatMsg> msgs;
   bool pinned;
-  ChatSession(this.id, this.title, this.msgs, {this.pinned = false});
+  bool archived;
+  ChatSession(this.id, this.title, this.msgs,
+      {this.pinned = false, this.archived = false});
 
   int get lastTs =>
       msgs.isEmpty ? 0 : msgs.map((m) => m.ts).reduce((a, b) => a > b ? a : b);
@@ -121,6 +123,7 @@ class _AppRootState extends State<AppRoot> {
   final List<ChatSession> _sessions = [];
   String _sessionKey = "";
   String _sessionQuery = "";
+  bool _showArchived = false;
   String _fsPath = "/root";
   List<FileSystemEntity> _fsEntries = [];
   final TextEditingController _termCtrl = TextEditingController();
@@ -392,6 +395,7 @@ class _AppRootState extends State<AppRoot> {
               (item['title'] ?? "新对话").toString(),
               msgs,
               pinned: item['p'] == true,
+              archived: item['a'] == true,
             ));
           }
         }
@@ -442,6 +446,7 @@ class _AppRootState extends State<AppRoot> {
             'id': s.id,
             'title': s.title,
             'p': s.pinned,
+            'a': s.archived,
             'msgs': [
               for (final m in s.msgs)
                 {'t': m.text, 'm': m.mine, 'k': m.kind, 'ts': m.ts}
@@ -786,6 +791,7 @@ class _AppRootState extends State<AppRoot> {
         'provider': 'deepseek-official',
         'model': _model,
         'approvalRequests': true,
+        'capabilities': {'userQuestions': true},
       };
       if (_reasoning != 'auto') initParams['reasoningEffort'] = _reasoning;
       final res = await _rpc('initialize', initParams,
@@ -957,11 +963,7 @@ class _AppRootState extends State<AppRoot> {
       if (method == 'approval/request') {
         unawaited(_showApproval(p, m['id']));
       } else if (method == 'user-question/ask') {
-        unawaited(_sendRaw({
-          'jsonrpc': '2.0',
-          'id': m['id'],
-          'result': {'cancelled': true},
-        }));
+        unawaited(_showQuestions(p, m['id']));
       } else {
         unawaited(_sendRaw({
           'jsonrpc': '2.0',
@@ -2584,6 +2586,119 @@ class _AppRootState extends State<AppRoot> {
     } catch (_) {}
   }
 
+  Future<void> _showQuestions(Map<String, dynamic> params, dynamic id) async {
+    final raw = params['questions'];
+    if (raw is! List || raw.isEmpty) {
+      await _sendRaw({
+        'jsonrpc': '2.0',
+        'id': id,
+        'result': {'cancelled': true},
+      });
+      return;
+    }
+    final answers = <Map<String, dynamic>>[];
+    var cancelled = false;
+    for (final q in raw) {
+      if (q is! Map) continue;
+      final qid = (q['id'] ?? "").toString();
+      final title = (q['question'] ?? q['header'] ?? "请选择").toString();
+      final options = <Map>[];
+      final opts = q['options'];
+      if (opts is List) {
+        for (final o in opts) {
+          if (o is Map) options.add(o);
+        }
+      }
+      String? selected;
+      final freeCtrl = TextEditingController();
+      final ok = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => StatefulBuilder(
+          builder: (ctx, setLocal) => AlertDialog(
+            backgroundColor: const Color(0xFF0B1220),
+            title: Text(title,
+                style: const TextStyle(color: Colors.white, fontSize: 14)),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final o in options)
+                    RadioListTile<String>(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      value: (o['label'] ?? o['id'] ?? "").toString(),
+                      groupValue: selected,
+                      activeColor: const Color(0xFF00FFCC),
+                      title: Text((o['label'] ?? o['id'] ?? "").toString(),
+                          style: const TextStyle(
+                              color: Colors.white, fontSize: 13)),
+                      subtitle: o['description'] == null
+                          ? null
+                          : Text(o['description'].toString(),
+                              style: const TextStyle(
+                                  color: Colors.white38, fontSize: 11)),
+                      onChanged: (v) => setLocal(() => selected = v),
+                    ),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: freeCtrl,
+                    style:
+                        const TextStyle(color: Colors.white, fontSize: 13),
+                    decoration: const InputDecoration(
+                      hintText: "或者自己写一个答案…",
+                      hintStyle:
+                          TextStyle(color: Colors.white24, fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  cancelled = true;
+                  Navigator.pop(ctx);
+                },
+                child: const Text("取消",
+                    style: TextStyle(color: Colors.white54)),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text("提交",
+                    style: TextStyle(color: Color(0xFF00FFCC))),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (ok != true) {
+        cancelled = true;
+        break;
+      }
+      final custom = freeCtrl.text.trim();
+      answers.add({
+        'id': qid,
+        'selected': selected == null ? <String>[] : [selected],
+        if (custom.isNotEmpty) 'custom': custom,
+      });
+    }
+    if (cancelled) {
+      await _sendRaw({
+        'jsonrpc': '2.0',
+        'id': id,
+        'result': {'cancelled': true},
+      });
+    } else {
+      await _sendRaw({
+        'jsonrpc': '2.0',
+        'id': id,
+        'result': {'answers': answers},
+      });
+    }
+  }
+
   Future<void> _regenerate() async {
     String last = "";
     for (final m in _msgs.reversed) {
@@ -2819,12 +2934,13 @@ class _AppRootState extends State<AppRoot> {
 
   List<ChatSession> get _filteredSessions {
     final q = _sessionQuery.trim().toLowerCase();
-    if (q.isEmpty) return _sessions;
     return [
       for (final s in _sessions)
-        if (s.title.toLowerCase().contains(q) ||
-            s.msgs.any((m) => m.text.toLowerCase().contains(q)))
-          s
+        if (s.archived == _showArchived)
+          if (q.isEmpty ||
+              s.title.toLowerCase().contains(q) ||
+              s.msgs.any((m) => m.text.toLowerCase().contains(q)))
+            s
     ];
   }
 
@@ -2898,6 +3014,19 @@ class _AppRootState extends State<AppRoot> {
               },
             ),
             ListTile(
+              leading: Icon(
+                  s.archived ? Icons.unarchive_outlined : Icons.archive_outlined,
+                  size: 20,
+                  color: Colors.white70),
+              title: Text(s.archived ? "取消归档" : "归档",
+                  style: const TextStyle(color: Colors.white, fontSize: 14)),
+              onTap: () {
+                Navigator.pop(ctx);
+                setState(() => s.archived = !s.archived);
+                _saveSessions();
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.edit_outlined,
                   size: 20, color: Colors.white70),
               title: const Text("重命名",
@@ -2951,12 +3080,27 @@ class _AppRootState extends State<AppRoot> {
               padding: const EdgeInsets.fromLTRB(18, 18, 18, 8),
               child: Row(
                 children: [
-                  const Text("会话",
-                      style: TextStyle(
+                  Text(_showArchived ? "已归档" : "会话",
+                      style: const TextStyle(
                           color: Colors.white,
                           fontSize: 16,
                           fontWeight: FontWeight.w600)),
                   const Spacer(),
+                  IconButton(
+                    tooltip: _showArchived ? "返回会话" : "已归档",
+                    onPressed: () => setState(() {
+                      _showArchived = !_showArchived;
+                      _sessionQuery = "";
+                    }),
+                    icon: Icon(
+                        _showArchived
+                            ? Icons.unarchive_outlined
+                            : Icons.archive_outlined,
+                        size: 18,
+                        color: _showArchived
+                            ? const Color(0xFFFFD54F)
+                            : Colors.white38),
+                  ),
                   TextButton.icon(
                     onPressed: () {
                       Navigator.pop(context);
@@ -3073,7 +3217,12 @@ class _AppRootState extends State<AppRoot> {
 
   Widget _buildChat() {
     const none = TextDecoration.none;
-    return Scaffold(
+    return CallbackShortcuts(
+      bindings: <ShortcutActivator, VoidCallback>{
+        const SingleActivator(LogicalKeyboardKey.enter, control: true): _send,
+        const SingleActivator(LogicalKeyboardKey.enter, meta: true): _send,
+      },
+      child: Scaffold(
       backgroundColor: const Color(0xFF03060A),
       drawer: _buildDrawer(),
       body: Stack(
@@ -3475,7 +3624,7 @@ class _AppRootState extends State<AppRoot> {
         ),
       ),
         ],
-      ));
+      )));
   }
 
   Widget _buildWeb(WebViewController web) {
