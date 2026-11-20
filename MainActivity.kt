@@ -1,6 +1,7 @@
 package com.dsh.dshapp
 
 import android.content.Intent
+import android.speech.tts.TextToSpeech
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
@@ -61,6 +62,7 @@ class MainActivity : FlutterActivity() {
     private val workDir: File get() = envDir
 
     private var pendingPick: MethodChannel.Result? = null
+    private var tts: TextToSpeech? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -102,6 +104,31 @@ class MainActivity : FlutterActivity() {
                 }
                 "readEngineLog" -> result.success(readEngineLog())
                 "hasBundledEnv" -> result.success(hasBundledEnv())
+                "speak" -> {
+                    val text = call.argument<String>("text") ?: ""
+                    try {
+                        if (tts == null) {
+                            tts = TextToSpeech(applicationContext) { status ->
+                                if (status == TextToSpeech.SUCCESS) {
+                                    tts?.language = java.util.Locale.CHINA
+                                }
+                            }
+                        }
+                        tts?.stop()
+                        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "luchui")
+                        result.success(true)
+                    } catch (t: Throwable) {
+                        result.error("TTS_FAIL", t.message, null)
+                    }
+                }
+                "stopSpeak" -> {
+                    try {
+                        tts?.stop()
+                        result.success(true)
+                    } catch (t: Throwable) {
+                        result.success(false)
+                    }
+                }
                 "shareText" -> {
                     val text = call.argument<String>("text") ?: ""
                     try {

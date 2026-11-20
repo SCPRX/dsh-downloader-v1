@@ -130,6 +130,7 @@ class _AppRootState extends State<AppRoot> {
   String _reasoning = "auto";
   String _workDir = "/root";
   String _queuedText = "";
+  final Set<int> _expandedGroups = {};
   bool _fsLoading = false;
   bool _msgsLoaded = false;
   String _streamText = "";
@@ -1877,6 +1878,53 @@ class _AppRootState extends State<AppRoot> {
     return "约 ${(chars * 0.7).round()} tokens · $chars 字";
   }
 
+  int _groupStart(int i) {
+    var s = i;
+    while (s > 0 && _msgs[s - 1].kind != 0) {
+      s--;
+    }
+    return s;
+  }
+
+  int _groupLen(int start) {
+    var n = 0;
+    while (start + n < _msgs.length && _msgs[start + n].kind != 0) {
+      n++;
+    }
+    return n;
+  }
+
+  void _speak(String text) {
+    final clean = text
+        .replaceAll(RegExp(r"```[\s\S]*?```"), "代码块")
+        .replaceAll(RegExp(r"[*_`#>\[\]]"), "")
+        .replaceAll(RegExp(r"\(http[^\s)]+\)"), "");
+    unawaited(_ch.invokeMethod('speak', {'text': clean}));
+  }
+
+  void _forkFrom(int index) {
+    if (index < 0 || index >= _msgs.length) return;
+    final copy = <ChatMsg>[
+      for (final m in _msgs.take(index + 1)) ChatMsg(m.text, m.mine, kind: m.kind, ts: m.ts)
+    ];
+    final s = ChatSession(_newId(), "${_curTitle} · 分叉", copy);
+    setState(() {
+      _sessions.insert(0, s);
+      _sessionKey = s.id;
+      _msgs = s.msgs;
+      _sessionId = s.id;
+      _streamText = "";
+      _sending = false;
+      _chunkSeen = false;
+    });
+    _saveSessions();
+    _scrollToEnd();
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      const SnackBar(
+          content: Text("已从这条分叉出新对话"), duration: Duration(seconds: 1)),
+    );
+  }
+
   void _shareConversation() {
     final b = StringBuffer();
     b.writeln("# 落锤对话 - ${_curTitle}");
@@ -2455,6 +2503,16 @@ class _AppRootState extends State<AppRoot> {
                   _saveMsgs();
                 },
               ),
+            ListTile(
+              leading: const Icon(Icons.volume_up_outlined,
+                  size: 20, color: Colors.white70),
+              title: const Text("朗读",
+                  style: TextStyle(color: Colors.white, fontSize: 14)),
+              onTap: () {
+                Navigator.pop(ctx);
+                _speak(text);
+              },
+            ),
             if (isAi)
               ListTile(
                 leading: const Icon(Icons.refresh,
@@ -2464,6 +2522,17 @@ class _AppRootState extends State<AppRoot> {
                 onTap: () {
                   Navigator.pop(ctx);
                   _regenerate();
+                },
+              ),
+            if (isAi && index >= 0)
+              ListTile(
+                leading: const Icon(Icons.call_split,
+                    size: 20, color: Colors.white70),
+                title: const Text("从这里分叉",
+                    style: TextStyle(color: Colors.white, fontSize: 14)),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _forkFrom(index);
                 },
               ),
             ListTile(
@@ -3119,6 +3188,64 @@ class _AppRootState extends State<AppRoot> {
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
                 itemCount: _msgs.length + (_streamText.isNotEmpty ? 1 : 0),
                 itemBuilder: (ctx, i) {
+                  if (i < _msgs.length && _msgs[i].kind != 0) {
+                    final start = _groupStart(i);
+                    final count = _groupLen(start);
+                    final expanded = _expandedGroups.contains(start);
+                    if (i != start) {
+                      if (expanded) {
+                        // 展开后逐条显示
+                      } else {
+                        return const SizedBox.shrink();
+                      }
+                    } else if (count > 1) {
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 3),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(10),
+                          onTap: () {
+                            setState(() {
+                              if (expanded) {
+                                _expandedGroups.remove(start);
+                              } else {
+                                _expandedGroups.add(start);
+                              }
+                            });
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF0C141C),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                  color: const Color(0x1AFFFFFF)),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.account_tree_outlined,
+                                    size: 14, color: Color(0x8800FFCC)),
+                                const SizedBox(width: 6),
+                                Text("过程 $count 步",
+                                    style: const TextStyle(
+                                        color: Color(0x99FFFFFF),
+                                        fontSize: 11.5,
+                                        decoration: TextDecoration.none)),
+                                const SizedBox(width: 6),
+                                Icon(
+                                    expanded
+                                        ? Icons.expand_less
+                                        : Icons.expand_more,
+                                    size: 14,
+                                    color: Colors.white38),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    }
+                  }
                   if (_msgs.isEmpty && _streamText.isEmpty) {
                     return Padding(
                       padding: const EdgeInsets.only(top: 80),
