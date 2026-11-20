@@ -1829,6 +1829,20 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                               ),
                               ListTile(
                                 dense: true,
+                                leading: const Icon(Icons.travel_explore,
+                                    size: 20, color: Colors.white54),
+                                title: const Text("DeepSeek 官方网页版",
+                                    style: TextStyle(
+                                        color: Colors.white, fontSize: 14)),
+                                subtitle: const Text(
+                                    "chat-demo 开源前端，填 API Key 使用",
+                                    style: TextStyle(
+                                        color: Colors.white24, fontSize: 11)),
+                                onTap: () => _openWeb(
+                                    "https://deepseek-ai.github.io/chat-demo/"),
+                              ),
+                              ListTile(
+                                dense: true,
                                 leading: const Icon(Icons.public,
                                     size: 20, color: Colors.white54),
                                 title: const Text("打开网页版",
