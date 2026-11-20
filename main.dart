@@ -254,22 +254,46 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   Future<void> _applyHarnessPatches() async {
     final base =
         "$_appDir/dsh-env/rootfs/opt/dsh/node_modules/@deepseek-ai/";
+    const repo =
+        'https://raw.githubusercontent.com/SCPRX/dsh-downloader-v1/main/patches/';
+    const mirror =
+        'https://ghfast.top/https://raw.githubusercontent.com/SCPRX/dsh-downloader-v1/main/patches/';
     final jobs = <List<String>>[
       [
-        'assets/patches/dsh-session-persistence-jsonl__index.js',
+        'dsh-session-persistence-jsonl__index.js',
         "${base}dsh-session-persistence-jsonl/lib/index.js"
       ],
       [
-        'assets/patches/dsh-attachment-local__index.js',
+        'dsh-attachment-local__index.js',
         "${base}dsh-attachment-local/lib/index.js"
       ],
     ];
     for (final job in jobs) {
+      List<int>? bytes;
+      final cache = File("$_appDir/harness_patches/${job[0]}");
       try {
-        final data = await rootBundle.load(job[0]);
+        if (await cache.exists() && await cache.length() > 1000) {
+          bytes = await cache.readAsBytes();
+        } else {
+          for (final u in [repo + job[0], mirror + job[0]]) {
+            try {
+              final r =
+                  await http.get(Uri.parse(u)).timeout(const Duration(seconds: 30));
+              if (r.statusCode == 200 && r.bodyBytes.length > 1000) {
+                bytes = r.bodyBytes;
+                await cache.parent.create(recursive: true);
+                await cache.writeAsBytes(bytes);
+                break;
+              }
+            } catch (_) {}
+          }
+        }
+      } catch (_) {}
+      if (bytes == null) continue;
+      try {
         final f = File(job[1]);
         await f.parent.create(recursive: true);
-        await f.writeAsBytes(data.buffer.asUint8List(), flush: true);
+        await f.writeAsBytes(bytes, flush: true);
       } catch (_) {}
     }
   }
