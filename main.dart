@@ -95,6 +95,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   String _engineLog = "";
   bool _showKey = false;
   double _textScale = 1.0;
+  String _lastSessionId = "";
   String _balance = "";
   bool _balanceLoading = false;
   String _nativeFailMsg = "";
@@ -115,6 +116,9 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   final List<ChatSession> _sessions = [];
   String _sessionKey = "";
   String _sessionQuery = "";
+  String _fsPath = "/root";
+  List<FileSystemEntity> _fsEntries = [];
+  bool _fsLoading = false;
   bool _msgsLoaded = false;
   String _streamText = "";
   bool _sending = false;
@@ -367,6 +371,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
           _apiKey = (m['apiKey'] ?? "").toString();
           _model = (m['model'] ?? "deepseek-flash").toString();
           _textScale = (m['textScale'] as num?)?.toDouble() ?? 1.0;
+          _lastSessionId = (m['sessionKey'] ?? "").toString();
         }
       }
     } catch (_) {}
@@ -380,6 +385,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
         'apiKey': _apiKey,
         'model': _model,
         'textScale': _textScale,
+        'sessionKey': _sessionKey,
       }));
     } catch (_) {}
   }
@@ -436,8 +442,17 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     if (_sessions.isEmpty) {
       _sessions.add(ChatSession(_newId(), "新对话", <ChatMsg>[]));
     }
-    _sessionKey = _sessions.first.id;
-    _msgs = _sessions.first.msgs;
+    ChatSession pick = _sessions.first;
+    if (_lastSessionId.isNotEmpty) {
+      for (final s in _sessions) {
+        if (s.id == _lastSessionId) {
+          pick = s;
+          break;
+        }
+      }
+    }
+    _sessionKey = pick.id;
+    _msgs = pick.msgs;
     if (_msgs.isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToEnd());
     }
@@ -477,6 +492,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       _chunkSeen = false;
     });
     _saveSessions();
+    unawaited(_saveSettings());
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToEnd());
   }
 
@@ -1274,6 +1290,9 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
         case "setup":
           child = _buildSetup();
           break;
+        case "files":
+          child = _buildFiles();
+          break;
         default:
           child = _buildChat();
       }
@@ -1718,6 +1737,180 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     return "约 ${(chars * 0.7).round()} tokens · $chars 字";
   }
 
+  String get _fsRootHost => "$_appDir/dsh-env/rootfs";
+
+  Future<void> _loadFiles() async {
+    setState(() => _fsLoading = true);
+    try {
+      final dir = Directory("$_fsRootHost$_fsPath");
+      final list = dir.existsSync()
+          ? await dir.list(followLinks: false).toList()
+          : <FileSystemEntity>[];
+      list.sort((a, b) {
+        final ad = a is Directory ? 0 : 1;
+        final bd = b is Directory ? 0 : 1;
+        if (ad != bd) return ad - bd;
+        return a.path.toLowerCase().compareTo(b.path.toLowerCase());
+      });
+      if (!mounted) return;
+      setState(() => _fsEntries = list);
+    } catch (_) {
+      if (mounted) setState(() => _fsEntries = []);
+    } finally {
+      if (mounted) setState(() => _fsLoading = false);
+    }
+  }
+
+  void _openFiles() {
+    setState(() {
+      _phase = "files";
+      _fsPath = "/root";
+    });
+    unawaited(_loadFiles());
+  }
+
+  void _fsOpen(FileSystemEntity e) {
+    if (e is Directory) {
+      setState(() => _fsPath = e.path.substring(_fsRootHost.length));
+      unawaited(_loadFiles());
+      return;
+    }
+    final name = e.path.split("/").last;
+    final f = File(e.path);
+    final size = f.lengthSync();
+    String content = "";
+    if (size < 200 * 1024) {
+      try {
+        content = f.readAsStringSync();
+      } catch (_) {
+        content = "(二进制文件)";
+      }
+    } else {
+      content = "(文件较大：${(size / 1024).toStringAsFixed(0)} KB)";
+    }
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF0B1220),
+        title: Text(name,
+            style: const TextStyle(color: Colors.white, fontSize: 14)),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: 380,
+          child: SingleChildScrollView(
+            child: SelectableText(
+              content,
+              style: const TextStyle(
+                  color: Colors.white70,
+                  fontSize: 11,
+                  height: 1.4,
+                  fontFamily: 'monospace'),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: e.path.substring(_fsRootHost.length)));
+              Navigator.pop(ctx);
+            },
+            child: const Text("复制路径",
+                style: TextStyle(color: Color(0xCC00FFCC))),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("关闭", style: TextStyle(color: Colors.white54)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFiles() {
+    final parent = _fsPath == "/"
+        ? "/"
+        : _fsPath.substring(0, _fsPath.lastIndexOf("/") == 0
+            ? 1
+            : _fsPath.lastIndexOf("/"));
+    return Container(
+      color: const Color(0xFF03060A),
+      child: SafeArea(
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(6, 8, 16, 4),
+              child: Row(
+                children: [
+                  IconButton(
+                    onPressed: () => setState(() => _phase = "chat"),
+                    icon: const Icon(Icons.arrow_back,
+                        size: 20, color: Colors.white70),
+                  ),
+                  Expanded(
+                    child: Text(_fsPath,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: Colors.white, fontSize: 15)),
+                  ),
+                  if (_fsLoading)
+                    const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Color(0xFF00FFCC))),
+                ],
+              ),
+            ),
+            if (_fsPath != "/")
+              ListTile(
+                dense: true,
+                leading: const Icon(Icons.arrow_upward,
+                    size: 18, color: Color(0xFF00FFCC)),
+                title: const Text("上一级",
+                    style: TextStyle(color: Colors.white70, fontSize: 13)),
+                onTap: () {
+                  setState(() => _fsPath = parent);
+                  unawaited(_loadFiles());
+                },
+              ),
+            const Divider(height: 1, color: Color(0x22FFFFFF)),
+            Expanded(
+              child: ListView.builder(
+                itemCount: _fsEntries.length,
+                itemBuilder: (ctx, i) {
+                  final e = _fsEntries[i];
+                  final isDir = e is Directory;
+                  final name = e.path.split("/").last;
+                  return ListTile(
+                    dense: true,
+                    leading: Icon(
+                        isDir ? Icons.folder_outlined : Icons.description_outlined,
+                        size: 20,
+                        color: isDir
+                            ? const Color(0xCC00FFCC)
+                            : Colors.white38),
+                    title: Text(name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: Colors.white, fontSize: 13.5)),
+                    subtitle: isDir
+                        ? null
+                        : Text("${(e as File).lengthSync()} 字节",
+                            style: const TextStyle(
+                                color: Colors.white24, fontSize: 10)),
+                    onTap: () => _fsOpen(e),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _messageActions(String text, bool isAi) {
     showModalBottomSheet<void>(
       context: context,
@@ -1980,7 +2173,9 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     if (q.isEmpty) return _sessions;
     return [
       for (final s in _sessions)
-        if (s.title.toLowerCase().contains(q)) s
+        if (s.title.toLowerCase().contains(q) ||
+            s.msgs.any((m) => m.text.toLowerCase().contains(q)))
+          s
     ];
   }
 
@@ -2114,6 +2309,17 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                   ),
                 ],
               ),
+            ),
+            ListTile(
+              dense: true,
+              leading: const Icon(Icons.folder_open,
+                  size: 20, color: Color(0xCC00FFCC)),
+              title: const Text("工作区文件",
+                  style: TextStyle(color: Colors.white, fontSize: 14)),
+              onTap: () {
+                Navigator.pop(context);
+                _openFiles();
+              },
             ),
             const Divider(height: 1, color: Color(0x22FFFFFF)),
             Padding(
