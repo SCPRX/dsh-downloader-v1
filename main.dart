@@ -1502,6 +1502,12 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                           decorationColor: Colors.transparent)),
                   const Spacer(),
                   IconButton(
+                    tooltip: "引擎日志",
+                    onPressed: _showEngineLog,
+                    icon: const Icon(Icons.article_outlined,
+                        size: 20, color: Color(0xCC00FFCC)),
+                  ),
+                  IconButton(
                     tooltip: "网页版",
                     onPressed: _switchToWeb,
                     icon: const Icon(Icons.public,
@@ -1633,6 +1639,8 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                       });
                       await _afterEnvReady();
                     }),
+                    const SizedBox(width: 8),
+                    _webButton(Icons.article_outlined, _showEngineLog),
                     const SizedBox(width: 8),
                     _webButton(Icons.refresh, () => web.reload()),
                     const SizedBox(width: 8),
