@@ -102,6 +102,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   bool _rpcReady = false;
 
   final List<ChatMsg> _msgs = [];
+  bool _msgsLoaded = false;
   String _streamText = "";
   bool _sending = false;
   bool _chunkSeen = false;
@@ -234,6 +235,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     try {
       _appDir = (await _ch.invokeMethod<String>('filesDirPath')) ?? "";
       await _loadSettings();
+      await _loadMsgs();
       if (_apiKey.isEmpty) {
         setState(() {
           _phase = "setup";
@@ -366,6 +368,48 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   }
 
   File get _settingsFile => File("$_appDir/native_chat_settings.json");
+
+  File get _msgsFile => File("$_appDir/native_chat_messages.json");
+
+  Future<void> _loadMsgs() async {
+    if (_msgsLoaded) return;
+    _msgsLoaded = true;
+    try {
+      if (await _msgsFile.exists()) {
+        final list = jsonDecode(await _msgsFile.readAsString());
+        if (list is List) {
+          for (final item in list) {
+            if (item is Map) {
+              _msgs.add(ChatMsg((item['t'] ?? "").toString(), item['m'] == true));
+            }
+          }
+        }
+      }
+    } catch (_) {}
+    if (_msgs.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToEnd());
+    }
+  }
+
+  void _saveMsgs() {
+    try {
+      final list = [
+        for (final m in _msgs) {'t': m.text, 'm': m.mine}
+      ];
+      unawaited(_msgsFile.writeAsString(jsonEncode(list)));
+    } catch (_) {}
+  }
+
+  void _newChat() {
+    setState(() {
+      _msgs.clear();
+      _streamText = "";
+      _sessionId = 's${DateTime.now().millisecondsSinceEpoch}';
+      _sending = false;
+      _chunkSeen = false;
+    });
+    _saveMsgs();
+  }
 
   Future<void> _loadSettings() async {
     try {
@@ -947,6 +991,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
           _chunkSeen = false;
           _sending = false;
         });
+        _saveMsgs();
         _scrollToEnd();
       } else if (type == 'turn/end') {
         setState(() {
@@ -957,6 +1002,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
           _sending = false;
           _chunkSeen = false;
         });
+        _saveMsgs();
         _scrollToEnd();
       }
     } else if (method == 'session.status') {
@@ -1046,6 +1092,7 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       _streamText = "";
       _chunkSeen = false;
     });
+    _saveMsgs();
     _scrollToEnd();
     Timer(const Duration(seconds: 90), () {
       if (!mounted) return;
@@ -1550,6 +1597,24 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                           decoration: none,
                           decorationColor: Colors.transparent)),
                   const Spacer(),
+                  IconButton(
+                    tooltip: "新建对话",
+                    onPressed: _newChat,
+                    icon: const Icon(Icons.add_comment_outlined,
+                        size: 20, color: Color(0xCC00FFCC)),
+                  ),
+                  IconButton(
+                    tooltip: "设置",
+                    onPressed: () {
+                      setState(() {
+                        _phase = "setup";
+                        _failed = false;
+                        _status = "修改设置";
+                      });
+                    },
+                    icon: const Icon(Icons.settings_outlined,
+                        size: 20, color: Color(0xCC00FFCC)),
+                  ),
                   IconButton(
                     tooltip: "引擎日志",
                     onPressed: _showEngineLog,
