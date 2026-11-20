@@ -478,8 +478,21 @@ class MainActivity : FlutterActivity() {
                 return
             }
             var s = f.readText()
+            val renameCall = "await (await import(\"node:fs/promises\")).rename(tmp, finalPath);"
+            val renameMigration = "await (await import(\"node:fs/promises\")).rename(staged, currentPath);"
+            var changed = false
             if (s.contains("await link(tmp, finalPath);")) {
-                s = s.replace("await link(tmp, finalPath);", "await rename(tmp, finalPath);")
+                s = s.replace("await link(tmp, finalPath);", renameCall)
+                changed = true
+            }
+            if (s.contains("await internals.fs.link(staged, currentPath);")) {
+                s = s.replace(
+                    "await internals.fs.link(staged, currentPath);",
+                    renameMigration
+                )
+                changed = true
+            }
+            if (changed) {
                 f.writeText(s)
                 logEngine("[patch] hardlink->rename applied")
             } else {
