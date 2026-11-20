@@ -1486,22 +1486,28 @@ class _AppRootState extends State<AppRoot> {
                                       style: TextStyle(
                                           color: Color(0x99FFFFFF),
                                           fontSize: 13)),
-                                  for (final r in const ["auto", "low", "medium", "high"])
+                                  for (final item in const [
+                                    ["自动", "auto"],
+                                    ["低", "low"],
+                                    ["中", "medium"],
+                                    ["高", "high"],
+                                  ])
                                     Padding(
                                       padding: const EdgeInsets.only(right: 6),
                                       child: ChoiceChip(
-                                        label: Text(r,
+                                        label: Text(item[0],
                                             style: TextStyle(
                                                 fontSize: 11,
-                                                color: _reasoning == r
+                                                color: _reasoning == item[1]
                                                     ? const Color(0xFF03211D)
                                                     : Colors.white70)),
-                                        selected: _reasoning == r,
+                                        selected: _reasoning == item[1],
                                         selectedColor: const Color(0xFF00FFCC),
                                         backgroundColor:
                                             const Color(0xFF15202B),
                                         onSelected: (_) {
-                                          setState(() => _reasoning = r);
+                                          setState(
+                                              () => _reasoning = item[1]);
                                           unawaited(_saveSettings());
                                           _engineRestartHint();
                                         },
