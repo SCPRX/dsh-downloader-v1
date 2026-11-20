@@ -60,6 +60,8 @@ class MainActivity : FlutterActivity() {
         get() = File(rootfsDir, "opt/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js")
     private val workDir: File get() = envDir
 
+    private var pendingPick: MethodChannel.Result? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         super.onCreate(savedInstanceState)
@@ -100,6 +102,18 @@ class MainActivity : FlutterActivity() {
                 }
                 "readEngineLog" -> result.success(readEngineLog())
                 "hasBundledEnv" -> result.success(hasBundledEnv())
+                "pickImage" -> {
+                    pendingPick = result
+                    try {
+                        val i = Intent(Intent.ACTION_OPEN_DOCUMENT)
+                        i.addCategory(Intent.CATEGORY_OPENABLE)
+                        i.type = "image/*"
+                        startActivityForResult(i, 4242)
+                    } catch (t: Throwable) {
+                        pendingPick = null
+                        result.error("PICK_FAIL", t.message, null)
+                    }
+                }
                 "runShell" -> {
                     val cmd = call.argument<String>("cmd") ?: ""
                     Thread {
@@ -151,6 +165,38 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode == 4242) {
+            val r = pendingPick
+            pendingPick = null
+            if (resultCode == RESULT_OK && data?.data != null) {
+                try {
+                    val uri = data.data!!
+                    val mime = contentResolver.getType(uri) ?: "image/jpeg"
+                    val ext = when {
+                        mime.contains("png") -> "png"
+                        mime.contains("webp") -> "webp"
+                        else -> "jpg"
+                    }
+                    val f = File(cacheDir, "picked_" + System.currentTimeMillis() + "." + ext)
+                    contentResolver.openInputStream(uri).use { input ->
+                        if (input != null) {
+                            f.outputStream().use { o -> input.copyTo(o) }
+                        }
+                    }
+                    r?.success(f.absolutePath)
+                } catch (t: Throwable) {
+                    r?.error("PICK_FAIL", t.message, null)
+                }
+            } else {
+                r?.success(null)
+            }
+            return
+        }
+        super.onActivityResult(requestCode, resultCode, data)
     }
 
     override fun onDestroy() {

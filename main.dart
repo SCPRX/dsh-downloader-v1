@@ -121,6 +121,8 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
   final TextEditingController _termCtrl = TextEditingController();
   String _termOut = "";
   bool _termBusy = false;
+  String _pendingImageB64 = "";
+  String _pendingImageMime = "";
   bool _fsLoading = false;
   bool _msgsLoaded = false;
   String _streamText = "";
@@ -1170,8 +1172,9 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
 
   Future<void> _send() async {
     final text = _inputCtrl.text.trim();
-    if (text.isEmpty || _sending) return;
-    if (text.startsWith("/")) {
+    final hasImage = _pendingImageB64.isNotEmpty;
+    if ((text.isEmpty && !hasImage) || _sending) return;
+    if (!hasImage && text.startsWith("/")) {
       _inputCtrl.clear();
       _handleSlash(text);
       return;
@@ -1186,13 +1189,18 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       return;
     }
     _inputCtrl.clear();
+    final shown = text.isEmpty ? "[图片]" : text;
+    final imageB64 = _pendingImageB64;
+    final imageMime = _pendingImageMime;
     setState(() {
-      _msgs.add(ChatMsg(text, true));
+      _msgs.add(ChatMsg(shown, true));
       for (final s in _sessions) {
         if (s.id == _sessionKey && s.title == "新对话") {
-          s.title = text.length > 12 ? text.substring(0, 12) : text;
+          s.title = shown.length > 12 ? shown.substring(0, 12) : shown;
         }
       }
+      _pendingImageB64 = "";
+      _pendingImageMime = "";
       _sending = true;
       _streamText = "";
       _chunkSeen = false;
@@ -1210,11 +1218,14 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
       }
     });
     try {
+      final blocks = <Map<String, dynamic>>[];
+      if (text.isNotEmpty) blocks.add({'type': 'text', 'text': text});
+      if (imageB64.isNotEmpty)
+        blocks.add(
+            {'type': 'image', 'data': imageB64, 'mimeType': imageMime});
       await _rpc('session/query', {
         'sessionId': _sessionId,
-        'contentBlocks': [
-          {'type': 'text', 'text': text}
-        ],
+        'contentBlocks': blocks,
       }, timeout: const Duration(minutes: 10));
     } catch (e) {
       setState(() {
@@ -1690,6 +1701,15 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                               ),
                               ListTile(
                                 dense: true,
+                                leading: const Icon(Icons.save_alt,
+                                    size: 20, color: Colors.white54),
+                                title: const Text("导出全部对话",
+                                    style: TextStyle(
+                                        color: Colors.white, fontSize: 14)),
+                                onTap: _exportAllSessions,
+                              ),
+                              ListTile(
+                                dense: true,
                                 leading: const Icon(Icons.public,
                                     size: 20, color: Colors.white54),
                                 title: const Text("打开网页版",
@@ -1751,6 +1771,67 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
     final chars = _ctxChars;
     if (chars == 0) return "";
     return "约 ${(chars * 0.7).round()} tokens · $chars 字";
+  }
+
+  Future<void> _attachImage() async {
+    try {
+      final path = await _ch.invokeMethod<String>('pickImage');
+      if (path == null || path.isEmpty) return;
+      final f = File(path);
+      if (!await f.exists()) return;
+      final bytes = await f.readAsBytes();
+      if (bytes.length > 8 * 1024 * 1024) {
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+          const SnackBar(content: Text("图片太大（超过 8MB）")),
+        );
+        return;
+      }
+      final ext = path.split('.').last.toLowerCase();
+      final mime = ext == 'png'
+          ? 'image/png'
+          : (ext == 'webp' ? 'image/webp' : 'image/jpeg');
+      setState(() {
+        _pendingImageB64 = base64Encode(bytes);
+        _pendingImageMime = mime;
+      });
+    } catch (e) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(content: Text("选图失败: $e")),
+      );
+    }
+  }
+
+  void _exportAllSessions() {
+    final b = StringBuffer();
+    b.writeln("# 落锤 全部对话导出");
+    for (final s in _sessions) {
+      b.writeln();
+      b.writeln("## ${s.title}");
+      for (final m in s.msgs) {
+        final t = DateTime.fromMillisecondsSinceEpoch(m.ts);
+        final hh = t.hour.toString().padLeft(2, "0");
+        final mm = t.minute.toString().padLeft(2, "0");
+        b.writeln();
+        b.writeln("${m.mine ? "**我**" : "**AI**"} ($hh:$mm)");
+        b.writeln();
+        b.writeln(m.text);
+      }
+    }
+    Clipboard.setData(ClipboardData(text: b.toString()));
+    String saved = "";
+    try {
+      final dir = Directory("$_appDir/dsh-env/rootfs/root/exports");
+      dir.createSync(recursive: true);
+      final f = File(
+          "${dir.path}/all-${DateTime.now().millisecondsSinceEpoch}.md");
+      f.writeAsStringSync(b.toString());
+      saved = "，已存到 /root/exports/${f.uri.pathSegments.last}";
+    } catch (_) {}
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(
+          content: Text("全部对话已复制$saved"),
+          duration: const Duration(seconds: 2)),
+    );
   }
 
   Future<void> _runShellCmd(String cmd) async {
@@ -2828,6 +2909,32 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
                     child: CircularProgressIndicator(
                         strokeWidth: 2, color: Color(0xFF00FFCC))),
               ),
+            if (_pendingImageB64.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 2, 16, 2),
+                child: Row(
+                  children: [
+                    const Icon(Icons.image,
+                        size: 14, color: Color(0xFF00FFCC)),
+                    const SizedBox(width: 6),
+                    const Expanded(
+                      child: Text("已附加图片，发送时一起发出",
+                          style: TextStyle(
+                              color: Color(0x99FFFFFF),
+                              fontSize: 11,
+                              decoration: TextDecoration.none)),
+                    ),
+                    InkWell(
+                      onTap: () => setState(() {
+                        _pendingImageB64 = "";
+                        _pendingImageMime = "";
+                      }),
+                      child: const Icon(Icons.close,
+                          size: 14, color: Colors.white38),
+                    ),
+                  ],
+                ),
+              ),
             if (_ctxText.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(right: 18, bottom: 2),
@@ -2844,6 +2951,12 @@ class _AppRootState extends State<AppRoot> with SingleTickerProviderStateMixin {
               padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
               child: Row(
                 children: [
+                  IconButton(
+                    tooltip: "发送图片",
+                    onPressed: _sending ? null : _attachImage,
+                    icon: const Icon(Icons.add_photo_alternate_outlined,
+                        size: 22, color: Color(0xCC00FFCC)),
+                  ),
                   Expanded(
                     child: TextField(
                       controller: _inputCtrl,
