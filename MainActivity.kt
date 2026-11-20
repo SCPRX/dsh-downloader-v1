@@ -467,40 +467,53 @@ class MainActivity : FlutterActivity() {
         }.start()
     }
 
-    private fun patchHarnessLinks() {
+    private fun patchOneFile(f: File, pairs: List<Pair<String, String>>) {
         try {
-            val f = File(
-                rootfsDir,
-                "opt/dsh/node_modules/@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js"
-            )
             if (!f.exists()) {
-                logEngine("[patch] persistence index.js not found")
+                logEngine("[patch] missing: " + f.absolutePath)
                 return
             }
             var s = f.readText()
-            val renameCall = "await (await import(\"node:fs/promises\")).rename(tmp, finalPath);"
-            val renameMigration = "await (await import(\"node:fs/promises\")).rename(staged, currentPath);"
             var changed = false
-            if (s.contains("await link(tmp, finalPath);")) {
-                s = s.replace("await link(tmp, finalPath);", renameCall)
-                changed = true
-            }
-            if (s.contains("await internals.fs.link(staged, currentPath);")) {
-                s = s.replace(
-                    "await internals.fs.link(staged, currentPath);",
-                    renameMigration
-                )
-                changed = true
+            for (p in pairs) {
+                if (s.contains(p.first)) {
+                    s = s.replace(p.first, p.second)
+                    changed = true
+                }
             }
             if (changed) {
                 f.writeText(s)
-                logEngine("[patch] hardlink->rename applied")
+                logEngine("[patch] ok: " + f.name)
             } else {
-                logEngine("[patch] already patched")
+                logEngine("[patch] skip(no match): " + f.name)
             }
         } catch (t: Throwable) {
-            logEngine("[patch] failed: " + t.message)
+            logEngine("[patch] fail " + f.name + ": " + t.message)
         }
+    }
+
+    private fun patchHarnessLinks() {
+        val dyn = "await (await import(\"node:fs/promises\"))."
+        patchOneFile(
+            File(
+                rootfsDir,
+                "opt/dsh/node_modules/@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js"
+            ),
+            listOf(
+                "await link(tmp, finalPath);" to (dyn + "rename(tmp, finalPath);"),
+                "await internals.fs.link(staged, currentPath);" to (dyn + "rename(staged, currentPath);")
+            )
+        )
+        patchOneFile(
+            File(
+                rootfsDir,
+                "opt/dsh/node_modules/@deepseek-ai/dsh-attachment-local/lib/index.js"
+            ),
+            listOf(
+                "await link(source, target);" to (dyn + "copyFile(source, target, 1);"),
+                "await link(staged.path, target);" to (dyn + "copyFile(staged.path, target, 1);")
+            )
+        )
     }
 
     private fun startSdk(apiKey: String) {
