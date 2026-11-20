@@ -486,7 +486,7 @@ class MainActivity : FlutterActivity() {
                     "mkdir -p '${filesDir.absolutePath}/proot-tmp' && " +
                     "export PROOT_TMP_DIR='${filesDir.absolutePath}/proot-tmp' && " +
                     "exec '${prootBin.absolutePath}' -0 -r '${rootfsDir.absolutePath}' " +
-                    "-b /dev -b /proc -b /sys -w /root " +
+                    "-b /dev -b /proc -b /sys -L -w /root " +
                     "/usr/bin/env HOME=/root DSH_HOME=/root/.dsh " +
                     "DEEPSEEK_API_KEY='$apiKey' " +
                     "/opt/node/bin/node --expose-internals " +
@@ -623,7 +623,7 @@ class MainActivity : FlutterActivity() {
                     "mkdir -p '${filesDir.absolutePath}/proot-tmp' && " +
                     "export PROOT_TMP_DIR='${filesDir.absolutePath}/proot-tmp' && " +
                     "exec '${prootBin.absolutePath}' -0 -r '${rootfsDir.absolutePath}' " +
-                    "-b /dev -b /proc -b /sys -w /root " +
+                    "-b /dev -b /proc -b /sys -L -w /root " +
                     "/usr/bin/env HOME=/root DSH_HOME=/root/.dsh " +
                     "DEEPSEEK_API_KEY='$apiKey' " +
                     "/opt/node/bin/node --expose-internals " +
