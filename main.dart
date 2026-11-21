@@ -106,6 +106,7 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
   double _cloudSpeed = 0.04;
   bool _enterSends = true;
   bool _inputExpanded = true;
+  String _thinkingText = "";
   final FocusNode _inputFocus = FocusNode();
   String _lastSessionId = "";
   String _balance = "";
@@ -1059,7 +1060,13 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
             ? (data['chunk'] as Map)
             : (data is Map ? data : const <String, dynamic>{});
         final ctype = chunk['type']?.toString() ?? '';
-        if (ctype == 'text-delta' || ctype.isEmpty) {
+        if (ctype == 'reasoning-delta') {
+          final txt = chunk['text']?.toString() ?? '';
+          if (txt.isNotEmpty) {
+            setState(() => _thinkingText += txt);
+            _scrollToEnd();
+          }
+        } else if (ctype == 'text-delta' || ctype.isEmpty) {
           final txt = chunk['text']?.toString() ?? _textOf(chunk);
           if (txt.isNotEmpty) {
             _chunkSeen = true;
@@ -1069,7 +1076,13 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
         }
       } else if (type == 'assistant/message') {
         final finalText = _messageText(data);
+        final reasoning = _reasoningText(data);
         setState(() {
+          final think = reasoning.isNotEmpty ? reasoning : _thinkingText;
+          if (think.trim().isNotEmpty) {
+            _msgs.add(ChatMsg(think.trim(), false, kind: 3));
+          }
+          _thinkingText = "";
           final out = finalText.isNotEmpty ? finalText : _streamText;
           if (out.isNotEmpty) {
             _msgs.add(ChatMsg(out, false));
@@ -1155,6 +1168,28 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
   String _clip(String s, int n) {
     if (s.length <= n) return s;
     return s.substring(0, n) + "…";
+  }
+
+  String _reasoningText(dynamic data) {
+    if (data is Map) {
+      final msg = data['message'];
+      if (msg is Map) {
+        final content = msg['content'];
+        if (content is List) {
+          final b = StringBuffer();
+          for (final blk in content) {
+            if (blk is Map) {
+              final type = blk['type']?.toString();
+              if (type == 'reasoning' && blk['text'] is String) {
+                b.write(blk['text']);
+              }
+            }
+          }
+          return b.toString();
+        }
+      }
+    }
+    return "";
   }
 
   String _messageText(dynamic data) {
@@ -3659,7 +3694,9 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
                 child: ListView.builder(
                 controller: _scrollCtrl,
                 padding: EdgeInsets.fromLTRB(hPad, 8, hPad, 10),
-                itemCount: _msgs.length + (_streamText.isNotEmpty ? 1 : 0),
+                itemCount: _msgs.length +
+                    (_streamText.isNotEmpty ? 1 : 0) +
+                    (_thinkingText.isNotEmpty ? 1 : 0),
                 itemBuilder: (ctx, i) {
                   if (i < _msgs.length && _msgs[i].kind != 0) {
                     final start = _groupStart(i);
@@ -3764,7 +3801,16 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
                       ),
                     );
                   }
-                  final isStream = i == _msgs.length;
+                  final thinkIndex = _msgs.length;
+                  final streamIndex =
+                      _msgs.length + (_thinkingText.isNotEmpty ? 1 : 0);
+                  if (i == _msgs.length && _thinkingText.isNotEmpty) {
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: _ThinkingBlock(text: _thinkingText, streaming: true),
+                    );
+                  }
+                  final isStream = i == streamIndex;
                   final text = isStream ? _streamText : _msgs[i].text;
                   final mine = isStream ? false : _msgs[i].mine;
                   return Padding(
@@ -3779,6 +3825,9 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
                             : CrossAxisAlignment.start,
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          if (!isStream && _msgs[i].kind == 3)
+                            _ThinkingBlock(text: text, streaming: false)
+                          else
                           _Bubble(
                         text: text,
                         mine: mine,
@@ -4281,6 +4330,55 @@ class _StarryPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _StarryPainter oldDelegate) => false;
+}
+
+class _ThinkingBlock extends StatelessWidget {
+  final String text;
+  final bool streaming;
+  const _ThinkingBlock({required this.text, required this.streaming});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+      decoration: BoxDecoration(
+        color: const Color(0x66060B10),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0x1AFFFFFF)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(streaming ? Icons.autorenew : Icons.lightbulb_outline,
+                  size: 13, color: const Color(0x9900FFCC)),
+              const SizedBox(width: 6),
+              Text(streaming ? "思考中…" : "思考过程",
+                  style: const TextStyle(
+                      color: Color(0x9900FFCC),
+                      fontSize: 11.5,
+                      decoration: TextDecoration.none)),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            text,
+            maxLines: streaming ? 6 : 40,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Color(0x99FFFFFF),
+              fontSize: 12.5,
+              height: 1.5,
+              fontStyle: FontStyle.italic,
+              decoration: TextDecoration.none,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _BubbleTime extends StatelessWidget {
