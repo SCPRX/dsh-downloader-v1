@@ -1818,6 +1818,21 @@ class _AppRootState extends State<AppRoot> {
                               ),
                               ListTile(
                                 dense: true,
+                                leading: const Icon(Icons.battery_charging_full,
+                                    size: 20, color: Colors.white54),
+                                title: const Text("后台运行设置",
+                                    style: TextStyle(
+                                        color: Colors.white, fontSize: 14)),
+                                subtitle: const Text(
+                                    "让系统别杀后台（电池优化/自启动）",
+                                    style: TextStyle(
+                                        color: Colors.white24, fontSize: 11)),
+                                onTap: () {
+                                  unawaited(_ch.invokeMethod('openBatterySettings'));
+                                },
+                              ),
+                              ListTile(
+                                dense: true,
                                 leading: const Icon(Icons.share_outlined,
                                     size: 20, color: Colors.white54),
                                 title: const Text("分享当前对话",

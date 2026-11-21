@@ -129,6 +129,39 @@ class MainActivity : FlutterActivity() {
                         result.success(false)
                     }
                 }
+                "openBatterySettings" -> {
+                    try {
+                        var done = false
+                        val pkg = packageName
+                        try {
+                            val i = Intent("android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS")
+                            i.data = android.net.Uri.parse("package:$pkg")
+                            startActivity(i)
+                            done = true
+                        } catch (_: Throwable) {
+                        }
+                        if (!done) {
+                            try {
+                                startActivity(
+                                    Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                                )
+                                done = true
+                            } catch (_: Throwable) {
+                            }
+                        }
+                        if (!done) {
+                            startActivity(
+                                Intent(
+                                    android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                    android.net.Uri.parse("package:$pkg")
+                                )
+                            )
+                        }
+                        result.success(true)
+                    } catch (t: Throwable) {
+                        result.error("BATTERY_SETTINGS_FAIL", t.message, null)
+                    }
+                }
                 "shareText" -> {
                     val text = call.argument<String>("text") ?: ""
                     try {
