@@ -1,8 +1,11 @@
 package com.dsh.dshapp
 
 import android.content.Intent
+import android.speech.tts.TextToSpeech
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.StatFs
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -25,27 +28,29 @@ class MainActivity : FlutterActivity() {
         private const val CHANNEL = "com.dsh.dshapp/status"
         private const val BASE_PORT = 3090
         private const val MAX_TRIES = 20
+
+        @Volatile var channel: MethodChannel? = null
+        @Volatile var webServer: Process? = null
+        @Volatile var sdkProc: Process? = null
+        @Volatile var sdkReaderRunning = false
+        @Volatile var starting = false
+        @Volatile var engineReady = false
+        @Volatile var engineUrl = ""
+        @Volatile var activePort = BASE_PORT
+        val lastLog = ArrayDeque<String>()
+        val pendingRpc = ArrayList<String>()
+        private val mainHandler = Handler(Looper.getMainLooper())
     }
-
-    private lateinit var channel: MethodChannel
-
-    @Volatile private var webServer: Process? = null
-
-    @Volatile private var sdkProc: Process? = null
-
-    @Volatile private var starting = false
-    @Volatile private var engineUrl: String = ""
-
-    @Volatile private var activePort: Int = BASE_PORT
-    private val lastLog = ArrayDeque<String>()
 
     private fun remember(line: String) {
         if (line.isBlank()) return
-        lastLog.addLast(line)
-        while (lastLog.size > 8) lastLog.removeFirst()
+        synchronized(lastLog) {
+            lastLog.addLast(line)
+            while (lastLog.size > 8) lastLog.removeFirst()
+        }
     }
 
-    private fun lastLogText(): String = lastLog.joinToString(" ｜ ")
+    private fun lastLogText(): String = synchronized(lastLog) { lastLog.joinToString(" ｜ ") }
 
     private val envDir: File get() = File(filesDir, "dsh-env")
     private val prootBin: File get() = File(envDir, "proot")
@@ -55,6 +60,9 @@ class MainActivity : FlutterActivity() {
     private val guestHarness: File
         get() = File(rootfsDir, "opt/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js")
     private val workDir: File get() = envDir
+
+    private var pendingPick: MethodChannel.Result? = null
+    private var tts: TextToSpeech? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -78,8 +86,9 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
-        channel.setMethodCallHandler { call, result ->
+        val ch = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
+        channel = ch
+        ch.setMethodCallHandler { call, result ->
             when (call.method) {
                 "checkEnv" -> result.success(isEnvReady())
                 "envZipPath" -> result.success(File(cacheDir, "env_data.zip").absolutePath)
@@ -93,20 +102,134 @@ class MainActivity : FlutterActivity() {
                         result.success(true)
                     }
                 }
-                "installLibs" -> {
-                    val libsPath = call.argument<String>("path")
-                    if (libsPath.isNullOrBlank()) {
-                        result.error("BAD_PATH", "path is empty", null)
-                    } else {
-                        installLibs(File(libsPath))
+                "readEngineLog" -> result.success(readEngineLog())
+                "hasBundledEnv" -> result.success(hasBundledEnv())
+                "speak" -> {
+                    val text = call.argument<String>("text") ?: ""
+                    try {
+                        if (tts == null) {
+                            tts = TextToSpeech(applicationContext) { status ->
+                                if (status == TextToSpeech.SUCCESS) {
+                                    tts?.language = java.util.Locale.CHINA
+                                }
+                            }
+                        }
+                        tts?.stop()
+                        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "luchui")
                         result.success(true)
+                    } catch (t: Throwable) {
+                        result.error("TTS_FAIL", t.message, null)
                     }
                 }
-                "repairLinks" -> {
-                    repairLinks()
+                "stopSpeak" -> {
+                    try {
+                        tts?.stop()
+                        result.success(true)
+                    } catch (t: Throwable) {
+                        result.success(false)
+                    }
+                }
+                "appInstallTime" -> {
+                    try {
+                        @Suppress("DEPRECATION")
+                        val info = packageManager.getPackageInfo(packageName, 0)
+                        result.success(info.lastUpdateTime)
+                    } catch (t: Throwable) {
+                        result.success(0L)
+                    }
+                }
+                "appVersion" -> {
+                    try {
+                        val pm = packageManager
+                        val info = if (android.os.Build.VERSION.SDK_INT >= 33)
+                            pm.getPackageInfo(packageName, android.content.pm.PackageManager.PackageInfoFlags.of(0))
+                        else
+                            pm.getPackageInfo(packageName, 0)
+                        result.success(info.versionName ?: "")
+                    } catch (t: Throwable) {
+                        result.success("")
+                    }
+                }
+                "openBatterySettings" -> {
+                    try {
+                        var done = false
+                        val pkg = packageName
+                        try {
+                            val i = Intent("android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS")
+                            i.data = android.net.Uri.parse("package:$pkg")
+                            startActivity(i)
+                            done = true
+                        } catch (_: Throwable) {
+                        }
+                        if (!done) {
+                            try {
+                                startActivity(
+                                    Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                                )
+                                done = true
+                            } catch (_: Throwable) {
+                            }
+                        }
+                        if (!done) {
+                            startActivity(
+                                Intent(
+                                    android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                    android.net.Uri.parse("package:$pkg")
+                                )
+                            )
+                        }
+                        result.success(true)
+                    } catch (t: Throwable) {
+                        result.error("BATTERY_SETTINGS_FAIL", t.message, null)
+                    }
+                }
+                "shareText" -> {
+                    val text = call.argument<String>("text") ?: ""
+                    try {
+                        val i = Intent(Intent.ACTION_SEND)
+                        i.type = "text/plain"
+                        i.putExtra(Intent.EXTRA_TEXT, text)
+                        startActivity(Intent.createChooser(i, "分享对话"))
+                        result.success(true)
+                    } catch (t: Throwable) {
+                        result.error("SHARE_FAIL", t.message, null)
+                    }
+                }
+                "resetEnv" -> {
+                    try {
+                        killSdk()
+                        killWeb()
+                        webServer?.destroy()
+                        if (envDir.exists()) envDir.deleteRecursively()
+                        logEngine("[reset] env removed")
+                        result.success(true)
+                    } catch (t: Throwable) {
+                        result.error("RESET_FAIL", t.message, null)
+                    }
+                }
+                "pickImage" -> {
+                    pendingPick = result
+                    try {
+                        val i = Intent(Intent.ACTION_OPEN_DOCUMENT)
+                        i.addCategory(Intent.CATEGORY_OPENABLE)
+                        i.type = "image/*"
+                        startActivityForResult(i, 4242)
+                    } catch (t: Throwable) {
+                        pendingPick = null
+                        result.error("PICK_FAIL", t.message, null)
+                    }
+                }
+                "runShell" -> {
+                    val cmd = call.argument<String>("cmd") ?: ""
+                    Thread {
+                        val out = runShell(cmd)
+                        mainHandler.post { result.success(out) }
+                    }.start()
+                }
+                "installBundledEnv" -> {
+                    installBundledEnv()
                     result.success(true)
                 }
-                "readEngineLog" -> result.success(readEngineLog())
                 "startSdk" -> {
                     val apiKey = call.argument<String>("apiKey") ?: ""
                     startSdk(apiKey)
@@ -118,7 +241,19 @@ class MainActivity : FlutterActivity() {
                     result.success(true)
                 }
                 "startWeb" -> {
-                    startWeb()
+                    val key = call.argument<String>("apiKey") ?: ""
+                    startWeb(key)
+                    result.success(true)
+                }
+                "engineAlive" -> result.success(sdkProc?.isAlive == true && sdkReaderRunning)
+                "setEngineReady" -> {
+                    engineReady = call.argument<Boolean>("ready") ?: true
+                    result.success(true)
+                }
+                "engineReady" -> result.success(engineReady)
+                "killEngine" -> {
+                    killSdk()
+                    engineReady = false
                     result.success(true)
                 }
                 "openEngine" -> {
@@ -136,6 +271,45 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode == 4242) {
+            val r = pendingPick
+            pendingPick = null
+            if (resultCode == RESULT_OK && data?.data != null) {
+                try {
+                    val uri = data.data!!
+                    val mime = contentResolver.getType(uri) ?: "image/jpeg"
+                    val ext = when {
+                        mime.contains("png") -> "png"
+                        mime.contains("webp") -> "webp"
+                        else -> "jpg"
+                    }
+                    val f = File(cacheDir, "picked_" + System.currentTimeMillis() + "." + ext)
+                    contentResolver.openInputStream(uri).use { input ->
+                        if (input != null) {
+                            f.outputStream().use { o -> input.copyTo(o) }
+                        }
+                    }
+                    r?.success(f.absolutePath)
+                } catch (t: Throwable) {
+                    r?.error("PICK_FAIL", t.message, null)
+                }
+            } else {
+                r?.success(null)
+            }
+            return
+        }
+        super.onActivityResult(requestCode, resultCode, data)
+    }
+
+    override fun onDestroy() {
+        if (channel === MainActivity.channel) {
+            channel = null
+        }
+        super.onDestroy()
     }
 
     private fun engineLogFile(): File = File(filesDir, "engine.log")
@@ -162,21 +336,33 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun status(msg: String) {
-        runOnUiThread {
-            if (this::channel.isInitialized) channel.invokeMethod("updateStatus", msg)
+        val ch = channel ?: return
+        mainHandler.post {
+            try {
+                ch.invokeMethod("updateStatus", msg)
+            } catch (_: Throwable) {
+            }
         }
     }
 
     private fun fail(msg: String) {
         status(msg)
-        runOnUiThread {
-            if (this::channel.isInitialized) channel.invokeMethod("failed", msg)
+        val ch = channel ?: return
+        mainHandler.post {
+            try {
+                ch.invokeMethod("failed", msg)
+            } catch (_: Throwable) {
+            }
         }
     }
 
     private fun notifyEvent(method: String, arg: Any?) {
-        runOnUiThread {
-            if (this::channel.isInitialized) channel.invokeMethod(method, arg)
+        val ch = channel ?: return
+        mainHandler.post {
+            try {
+                ch.invokeMethod(method, arg)
+            } catch (_: Throwable) {
+            }
         }
     }
 
@@ -208,6 +394,86 @@ class MainActivity : FlutterActivity() {
     private fun isEnvReady(): Boolean =
         prootBin.exists() && loaderBin.exists() && guestNode.exists() && guestHarness.exists()
 
+    private fun runShell(cmd: String): String {
+        if (!isEnvReady()) return "环境还没装好"
+        return try {
+            val safe = cmd.replace("'", "'\\''")
+            val full = "cd '${workDir.absolutePath}' && " +
+                "export LD_LIBRARY_PATH='${envDir.absolutePath}/lib' && " +
+                "export PROOT_LOADER='${envDir.absolutePath}/loader' && " +
+                "export PROOT_LOADER_32='${envDir.absolutePath}/loader32' && " +
+                "export PROOT_NO_SECCOMP=1 && " +
+                "mkdir -p '${filesDir.absolutePath}/proot-tmp' && " +
+                "export PROOT_TMP_DIR='${filesDir.absolutePath}/proot-tmp' && " +
+                "exec '${prootBin.absolutePath}' -0 -r '${rootfsDir.absolutePath}' " +
+                "-b /dev -b /proc -b /sys -b /system -L -w /root " +
+                "/usr/bin/env HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin " +
+                "/bin/bash -lc '$safe'"
+            val p = ProcessBuilder("/system/bin/sh", "-c", full)
+                .directory(workDir)
+                .redirectErrorStream(true)
+                .start()
+            val sb = StringBuilder()
+            val reader = BufferedReader(InputStreamReader(p.inputStream))
+            var line = reader.readLine()
+            while (line != null) {
+                sb.append(line).append("\n")
+                if (sb.length > 20000) {
+                    sb.append("…(输出过长已截断)\n")
+                    break
+                }
+                line = reader.readLine()
+            }
+            try {
+                reader.close()
+            } catch (_: Throwable) {
+            }
+            var waited = 0
+            while (p.isAlive && waited < 90) {
+                Thread.sleep(200)
+                waited += 1
+            }
+            if (p.isAlive) {
+                p.destroy()
+                sb.append("\n(超时，已终止)")
+            }
+            sb.toString()
+        } catch (t: Throwable) {
+            "执行失败: " + t.message
+        }
+    }
+
+    private fun hasBundledEnv(): Boolean = try {
+        assets.open("runtime.zip").use { true }
+    } catch (_: Throwable) {
+        false
+    }
+
+    private fun installBundledEnv() {
+        Thread {
+            try {
+                val zip = File(cacheDir, "env_data.zip")
+                status("正在安装内置环境…")
+                assets.open("runtime.zip").use { input ->
+                    FileOutputStream(zip).use { out ->
+                        val buf = ByteArray(256 * 1024)
+                        var n = input.read(buf)
+                        var total = 0L
+                        while (n > 0) {
+                            out.write(buf, 0, n)
+                            total += n
+                            n = input.read(buf)
+                        }
+                        logEngine("[bundle] copied " + total + " bytes")
+                    }
+                }
+                extractEnv(zip)
+            } catch (t: Throwable) {
+                fail("内置环境安装失败: " + t.message)
+            }
+        }.start()
+    }
+
     private fun extractEnv(zipFile: File) {
         Thread {
             try {
@@ -227,7 +493,7 @@ class MainActivity : FlutterActivity() {
 
                 status("正在解压环境(耗时较长)...")
                 var count = 0
-                val buf = ByteArray(64 * 1024)
+                val buf = ByteArray(512 * 1024)
                 val root = envDir.canonicalPath
                 val linkCandidates = ArrayList<Pair<String, String>>()
                 val linkLike = Regex("^[.]{0,2}/?[A-Za-z0-9@._+/-]+$")
@@ -332,9 +598,11 @@ class MainActivity : FlutterActivity() {
                     return@Thread
                 }
                 status("解压完成，共 $count 个文件，恢复 $links 个链接")
+                logEngine("[env] extract done, $count files, $links links")
                 zipFile.delete()
                 notifyEvent("envReady", null)
             } catch (t: Throwable) {
+                logEngine("[err] extract fail: " + t.message)
                 try {
                     zipFile.delete()
                 } catch (_: Throwable) {
@@ -342,92 +610,53 @@ class MainActivity : FlutterActivity() {
                 fail("解压失败: ${t.message}（坏包已删除，请重试）")
             }
         }.start()
+    }    private fun patchOneFile(f: File, pairs: List<Pair<String, String>>) {
+        try {
+            if (!f.exists()) {
+                logEngine("[patch] missing: " + f.absolutePath)
+                return
+            }
+            var s = f.readText()
+            var changed = false
+            for (p in pairs) {
+                if (s.contains(p.first)) {
+                    s = s.replace(p.first, p.second)
+                    changed = true
+                }
+            }
+            if (changed) {
+                f.writeText(s)
+                logEngine("[patch] ok: " + f.name)
+            } else {
+                logEngine("[patch] skip(no match): " + f.name)
+            }
+        } catch (t: Throwable) {
+            logEngine("[patch] fail " + f.name + ": " + t.message)
+        }
     }
 
-    private fun installLibs(zipFile: File) {
-        Thread {
-            try {
-                if (!zipFile.exists()) {
-                    fail("找不到运行库补丁包")
-                    return@Thread
-                }
-                status("正在安装运行库...")
-                val buf = ByteArray(64 * 1024)
-                val root = envDir.canonicalPath
-                ZipInputStream(FileInputStream(zipFile)).use { z ->
-                    while (true) {
-                        val e = z.nextEntry ?: break
-                        val f = File(envDir, e.name)
-                        if (!f.canonicalPath.startsWith(root + File.separator) &&
-                            f.canonicalPath != root
-                        ) {
-                            continue
-                        }
-                        if (e.isDirectory) {
-                            f.mkdirs()
-                            continue
-                        }
-                        f.parentFile?.mkdirs()
-                        FileOutputStream(f).use { o ->
-                            var n = z.read(buf)
-                            while (n > 0) {
-                                o.write(buf, 0, n)
-                                n = z.read(buf)
-                            }
-                        }
-                    }
-                }
-                zipFile.delete()
-                status("运行库安装完成")
-                notifyEvent("libsReady", null)
-            } catch (t: Throwable) {
-                fail("运行库安装失败: ${t.message}")
-            }
-        }.start()
-    }
-
-    private fun repairLinks() {
-        Thread {
-            val marker = File(envDir, ".links-ok")
-            if (marker.exists()) {
-                notifyEvent("linksReady", null)
-                return@Thread
-            }
-            try {
-                status("正在修复运行环境…")
-                val linkLike = Regex("^[.]{0,2}/?[A-Za-z0-9@._+/-]+$")
-                var fixed = 0
-                if (android.os.Build.VERSION.SDK_INT >= 26) {
-                    envDir.walkTopDown().forEach { f ->
-                        try {
-                            if (!f.isFile) return@forEach
-                            val len = f.length()
-                            if (len < 1L || len > 300L) return@forEach
-                            val content = f.readText().trim()
-                            if (content.isEmpty() || content.length > 300) return@forEach
-                            if (content.contains('\n') || !linkLike.matches(content)) {
-                                return@forEach
-                            }
-                            val t = File(f.parentFile, content)
-                            if (!t.exists()) return@forEach
-                            if (t.canonicalPath == f.canonicalPath) return@forEach
-                            f.delete()
-                            java.nio.file.Files.createSymbolicLink(
-                                f.toPath(),
-                                java.nio.file.Paths.get(content)
-                            )
-                            fixed++
-                        } catch (_: Throwable) {
-                        }
-                    }
-                }
-                marker.writeText("ok")
-                status("环境修复完成，共 $fixed 个链接")
-            } catch (t: Throwable) {
-                status("环境修复出错: ${t.message}")
-            }
-            notifyEvent("linksReady", null)
-        }.start()
+    private fun patchHarnessLinks() {
+        val dyn = "await (await import(\"node:fs/promises\"))."
+        patchOneFile(
+            File(
+                rootfsDir,
+                "opt/dsh/node_modules/@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js"
+            ),
+            listOf(
+                "await link(tmp, finalPath);" to (dyn + "rename(tmp, finalPath);"),
+                "await internals.fs.link(staged, currentPath);" to (dyn + "rename(staged, currentPath);")
+            )
+        )
+        patchOneFile(
+            File(
+                rootfsDir,
+                "opt/dsh/node_modules/@deepseek-ai/dsh-attachment-local/lib/index.js"
+            ),
+            listOf(
+                "await link(source, target);" to (dyn + "copyFile(source, target, 1);"),
+                "await link(staged.path, target);" to (dyn + "copyFile(staged.path, target, 1);")
+            )
+        )
     }
 
     private fun startSdk(apiKey: String) {
@@ -437,6 +666,7 @@ class MainActivity : FlutterActivity() {
         }
         killWeb()
         killSdk()
+        patchHarnessLinks()
 
         Thread {
             try {
@@ -446,21 +676,40 @@ class MainActivity : FlutterActivity() {
                     "export PROOT_LOADER='${envDir.absolutePath}/loader' && " +
                     "export PROOT_LOADER_32='${envDir.absolutePath}/loader32' && " +
                     "export PROOT_NO_SECCOMP=1 && " +
+                    "mkdir -p '${filesDir.absolutePath}/proot-tmp' && " +
+                    "export PROOT_TMP_DIR='${filesDir.absolutePath}/proot-tmp' && " +
                     "exec '${prootBin.absolutePath}' -0 -r '${rootfsDir.absolutePath}' " +
-                    "-b /dev -b /proc -b /sys -w /root " +
+                    "-b /dev -b /dev/urandom:/dev/random -b /proc -b /proc/self/fd:/dev/fd -b /sys -b /system -b /apex -b /storage/emulated/0:/sdcard -L -w /root " +
                     "/usr/bin/env HOME=/root DSH_HOME=/root/.dsh " +
                     "DEEPSEEK_API_KEY='$apiKey' " +
                     "/opt/node/bin/node --expose-internals " +
                     "/opt/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js --profile sdk"
+                logEngine("[cmd] " + cmd)
                 val p = ProcessBuilder("/system/bin/sh", "-c", cmd)
                     .directory(workDir)
                     .redirectErrorStream(false)
                     .start()
                 sdkProc = p
+                logEngine("[start] process launched")
+
+                synchronized(pendingRpc) {
+                    for (l in pendingRpc) {
+                        try {
+                            p.outputStream.write((l + "\n").toByteArray(Charsets.UTF_8))
+                        } catch (_: Throwable) {
+                        }
+                    }
+                    pendingRpc.clear()
+                }
+                try {
+                    p.outputStream.flush()
+                } catch (_: Throwable) {
+                }
 
                 Thread {
                     try {
                         BufferedReader(InputStreamReader(p.inputStream)).use { r ->
+                            sdkReaderRunning = true
                             var line = r.readLine()
                             while (line != null) {
                                 remember(line)
@@ -470,6 +719,8 @@ class MainActivity : FlutterActivity() {
                             }
                         }
                     } catch (_: Throwable) {
+                    } finally {
+                        sdkReaderRunning = false
                     }
                 }.start()
 
@@ -489,11 +740,24 @@ class MainActivity : FlutterActivity() {
                     }
                 }.start()
 
+                Thread {
+                    var waited = 0
+                    while (sdkProc === p && p.isAlive && waited < 900) {
+                        Thread.sleep(30000)
+                        waited += 30
+                        if (sdkProc === p && p.isAlive) {
+                            logEngine("[wait] alive ${waited}s, no rpc yet")
+                        }
+                    }
+                }.start()
+
                 val code = p.waitFor()
+                logEngine("[exit] code=" + code)
                 if (sdkProc === p) {
                     fail("引擎退出(code=$code)：${lastLogText()}")
                 }
             } catch (t: Throwable) {
+                logEngine("[err] start fail: " + t.message)
                 fail("引擎启动失败: ${t.message}")
             }
         }.start()
@@ -502,7 +766,11 @@ class MainActivity : FlutterActivity() {
     private fun rpcSend(line: String) {
         Thread {
             try {
-                val p = sdkProc ?: return@Thread
+                val p = sdkProc
+                if (p == null) {
+                    synchronized(pendingRpc) { pendingRpc.add(line) }
+                    return@Thread
+                }
                 val out = p.outputStream
                 out.write((line + "\n").toByteArray(Charsets.UTF_8))
                 out.flush()
@@ -517,14 +785,18 @@ class MainActivity : FlutterActivity() {
         } catch (_: Throwable) {
         }
         sdkProc = null
+        sdkReaderRunning = false
+        engineReady = false
+        synchronized(pendingRpc) { pendingRpc.clear() }
     }
 
-    private fun startWeb() {
+    private fun startWeb(apiKey: String) {
         if (!isEnvReady()) {
             fail("环境还没装好")
             return
         }
         killSdk()
+        patchHarnessLinks()
         if (webServer?.isAlive == true) {
             Thread { awaitReady(webServer) }.start()
             return
@@ -542,11 +814,15 @@ class MainActivity : FlutterActivity() {
                     "export PROOT_LOADER='${envDir.absolutePath}/loader' && " +
                     "export PROOT_LOADER_32='${envDir.absolutePath}/loader32' && " +
                     "export PROOT_NO_SECCOMP=1 && " +
+                    "mkdir -p '${filesDir.absolutePath}/proot-tmp' && " +
+                    "export PROOT_TMP_DIR='${filesDir.absolutePath}/proot-tmp' && " +
                     "exec '${prootBin.absolutePath}' -0 -r '${rootfsDir.absolutePath}' " +
-                    "-b /dev -b /proc -b /sys -w /root " +
+                    "-b /dev -b /dev/urandom:/dev/random -b /proc -b /proc/self/fd:/dev/fd -b /sys -b /system -b /apex -b /storage/emulated/0:/sdcard -L -w /root " +
                     "/usr/bin/env HOME=/root DSH_HOME=/root/.dsh " +
+                    "DEEPSEEK_API_KEY='$apiKey' " +
                     "/opt/node/bin/node --expose-internals " +
                     "/opt/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js web --no-open --port $port"
+                logEngine("[webcmd] " + cmd)
                 val p = ProcessBuilder("/system/bin/sh", "-c", cmd)
                     .directory(workDir)
                     .redirectErrorStream(true)
