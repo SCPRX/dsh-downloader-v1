@@ -113,6 +113,7 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
   final FocusNode _inputFocus = FocusNode();
   String _lastSessionId = "";
   String _remoteUrl = "";
+  String _wallpaperPath = "";
   String _balance = "";
   bool _balanceLoading = false;
   String _nativeFailMsg = "";
@@ -379,6 +380,7 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
           _enterSends = (m['enterSends'] as bool?) ?? true;
           _lastSessionId = (m['sessionKey'] ?? "").toString();
           _remoteUrl = (m['remoteUrl'] ?? "").toString();
+          _wallpaperPath = (m['wallpaper'] ?? "").toString();
           _reasoning = (m['reasoning'] ?? "auto").toString();
           _workDir = (m['workDir'] ?? "/root").toString();
         }
@@ -398,6 +400,7 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
         'enterSends': _enterSends,
         'sessionKey': _sessionKey,
         'remoteUrl': _remoteUrl,
+        'wallpaper': _wallpaperPath,
         'reasoning': _reasoning,
         'workDir': _workDir,
       }));
@@ -1123,6 +1126,12 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
         if (!_appActive && finalText.isNotEmpty) {
           unawaited(_ch.invokeMethod('notifyDone', {'text': finalText}));
         }
+      } else if (type.contains('subagent')) {
+        setState(() {
+          _msgs.add(ChatMsg("🤖 $type", false, kind: 2));
+        });
+        _saveMsgs();
+        _scrollToEnd();
       } else if (type == 'tool/call') {
         final name = (data is Map
                 ? (data['toolName'] ?? data['name'] ?? data['tool'])
@@ -1782,6 +1791,35 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
                                 ],
                               ),
                               const SizedBox(height: 14),
+                              const Text("聊天背景",
+                                  style: TextStyle(
+                                      color: Colors.white, fontSize: 14)),
+                              const SizedBox(height: 8),
+                              Row(
+                                children: [
+                                  TextButton.icon(
+                                    onPressed: () => unawaited(_pickWallpaper()),
+                                    icon: const Icon(Icons.image_outlined,
+                                        size: 16, color: Color(0xFF00FFCC)),
+                                    label: const Text("选一张图片",
+                                        style: TextStyle(
+                                            color: Color(0xFF00FFCC),
+                                            fontSize: 13)),
+                                  ),
+                                  if (_wallpaperPath.isNotEmpty)
+                                    TextButton(
+                                      onPressed: () {
+                                        setState(() => _wallpaperPath = "");
+                                        unawaited(_saveSettings());
+                                      },
+                                      child: const Text("恢复默认",
+                                          style: TextStyle(
+                                              color: Colors.white54,
+                                              fontSize: 12)),
+                                    ),
+                                ],
+                              ),
+                              const SizedBox(height: 14),
                               const Text("回车键",
                                   style: TextStyle(
                                       color: Colors.white, fontSize: 14)),
@@ -2324,6 +2362,21 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
         ),
       ),
     );
+  }
+
+  Future<void> _pickWallpaper() async {
+    try {
+      final path = await _ch.invokeMethod<String>('pickImage');
+      if (path == null || path.isEmpty) return;
+      final dir = Directory("$_appDir/wallpapers");
+      if (!await dir.exists()) await dir.create(recursive: true);
+      final ext = path.split('.').last.toLowerCase();
+      final dst =
+          File("${dir.path}/wall_${DateTime.now().millisecondsSinceEpoch}.$ext");
+      await File(path).copy(dst.path);
+      setState(() => _wallpaperPath = dst.path);
+      unawaited(_saveSettings());
+    } catch (_) {}
   }
 
   void _showRemoteHost() {
@@ -3795,6 +3848,15 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
       body: Stack(
         fit: StackFit.expand,
         children: [
+          if (_wallpaperPath.isNotEmpty && File(_wallpaperPath).existsSync())
+            Positioned.fill(
+              child: Image.file(File(_wallpaperPath),
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => const SizedBox.shrink()),
+            ),
+          if (_wallpaperPath.isNotEmpty)
+            const Positioned.fill(
+                child: ColoredBox(color: Color(0x9903060A))),
           _StarField(speed: _cloudSpeed),
           SafeArea(
         child: Column(
