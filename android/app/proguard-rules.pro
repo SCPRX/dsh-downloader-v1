@@ -1,0 +1,5 @@
+-keep class com.dsh.dshapp.MainActivity { *; }
+-keep class com.dsh.dshapp.MainActivity$* { *; }
+-keep class io.flutter.** { *; }
+-keep class io.flutter.plugins.** { *; }
+-dontwarn io.flutter.embedding.**
