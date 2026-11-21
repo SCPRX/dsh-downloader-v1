@@ -1,58 +1,19 @@
 name: Build APK
 on: [push, workflow_dispatch]
-concurrency:
-  group: apk-build
-  cancel-in-progress: false
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
     - uses: actions/checkout@v4
-    - name: Checkout private assets
-      env:
-        KEY: ${{ secrets.PRIVATE_SSH_KEY }}
-      run: |
-        set -e
-        mkdir -p ~/.ssh
-        printf '%s\n' "$KEY" > ~/.ssh/id_ed25519
-        chmod 600 ~/.ssh/id_ed25519
-        ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
-        git clone --depth 1 git@github.com:SCPRX/dsh-runtime-private.git /tmp/priv
-    - uses: actions/setup-node@v4
-      with: { node-version: '22' }
-    - name: Prepare signing key
-      env:
-        B64: ${{ secrets.RELEASE_KEYSTORE_B64 }}
-      run: |
-        if [ -n "$B64" ]; then
-          echo "$B64" | base64 -d > "$GITHUB_WORKSPACE/android/app/release.jks"
-          ls -lh "$GITHUB_WORKSPACE/android/app/release.jks"
-        else
-          echo "no signing key, will fall back to debug"
-        fi
-    - name: Build runtime into APK assets
-      run: |
-        set -e
-        mkdir -p "$GITHUB_WORKSPACE/android/app/src/main/assets/patches"
-        cp /tmp/priv/patches/*.js "$GITHUB_WORKSPACE/android/app/src/main/assets/patches/"
-        bash /tmp/priv/scripts/build-runtime.sh \
-          "$GITHUB_WORKSPACE/android/app/src/main/assets/runtime.zip"
-        ls -lh "$GITHUB_WORKSPACE/android/app/src/main/assets/runtime.zip"
     - uses: actions/setup-java@v4
       with: { java-version: '17', distribution: 'temurin' }
     - uses: subosito/flutter-action@v2
       with: { channel: 'stable' }
     - name: Build
-      env:
-        RELEASE_KEYSTORE_PATH: ${{ github.workspace }}/android/app/release.jks
-        RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
-        RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
-        RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
       run: |
-        mkdir -p lib
+        mkdir -p lib assets
         cp main.dart lib/main.dart
+        cp icons/logo.png assets/logo.png
         cp MainActivity.kt android/app/src/main/kotlin/com/dsh/dshapp/MainActivity.kt
         for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
           test -f "icons/ic_launcher-$d.png" || { echo "missing icons/ic_launcher-$d.png"; exit 1; }
@@ -65,6 +26,7 @@ jobs:
         s = p.read_text()
         s = re.sub(r"https://github\.com/gradle/gradle-distributions/releases/download/v[0-9.]+/", "https://services.gradle.org/distributions/", s)
         p.write_text(s)
+        print(s)
         PY
         flutter pub get
         n=0
@@ -75,17 +37,7 @@ jobs:
           sleep 15
         done
         test -f build/app/outputs/flutter-apk/app-release.apk
-    - name: Publish release
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        RUN=${{ github.run_number }}
-        VER="2.$((RUN/100%100)).$((RUN%100))"
-        gh release create "v$VER" build/app/outputs/flutter-apk/app-release.apk \
-          --title "落锤 v$VER" \
-          --notes "内置运行环境（离线可用）· 自动构建 #$RUN" || true
     - uses: actions/upload-artifact@v4
       with:
         name: Final-APK
         path: build/app/outputs/flutter-apk/app-release.apk
-        compression-level: 0
