@@ -1297,8 +1297,7 @@ class _AppRootState extends State<AppRoot> {
   Widget build(BuildContext context) {
     final sysScale = MediaQuery.textScalerOf(context).scale(1.0);
     final scaled = MediaQuery.of(context).copyWith(
-      textScaler:
-          TextScaler.linear((_textScale * sysScale).clamp(0.85, 1.45)),
+      textScaler: TextScaler.linear(sysScale.clamp(0.85, 1.3)),
     );
     final web = _web;
     late final Widget child;
@@ -1623,7 +1622,7 @@ class _AppRootState extends State<AppRoot> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Text("字体大小",
+                              const Text("对话字号",
                                   style: TextStyle(
                                       color: Colors.white, fontSize: 14)),
                               const SizedBox(height: 10),
@@ -1632,9 +1631,10 @@ class _AppRootState extends State<AppRoot> {
                                 runSpacing: 8,
                                 children: [
                                   for (final item in const [
-                                    ["小", 0.9],
+                                    ["小", 0.85],
                                     ["标准", 1.0],
                                     ["大", 1.15],
+                                    ["特大", 1.3],
                                   ])
                                     Padding(
                                       padding: const EdgeInsets.only(right: 8),
@@ -1820,6 +1820,15 @@ class _AppRootState extends State<AppRoot> {
                                     style: TextStyle(
                                         color: Colors.white, fontSize: 14)),
                                 onTap: _showEngineLog,
+                              ),
+                              ListTile(
+                                dense: true,
+                                leading: const Icon(Icons.system_update_alt,
+                                    size: 20, color: Colors.white54),
+                                title: const Text("检查更新",
+                                    style: TextStyle(
+                                        color: Colors.white, fontSize: 14)),
+                                onTap: () => unawaited(_checkUpdate()),
                               ),
                               ListTile(
                                 dense: true,
@@ -2934,6 +2943,90 @@ class _AppRootState extends State<AppRoot> {
     );
   }
 
+  Future<void> _checkUpdate() async {
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => const AlertDialog(
+        backgroundColor: Color(0xFF0B1220),
+        content: Row(
+          children: [
+            SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: Color(0xFF00FFCC))),
+            SizedBox(width: 12),
+            Text("正在检查更新…",
+                style: TextStyle(color: Colors.white70, fontSize: 13)),
+          ],
+        ),
+      ),
+    );
+    String msg = "";
+    try {
+      final installTime =
+          await _ch.invokeMethod<int>('appInstallTime') ?? 0;
+      final resp = await http.get(
+        Uri.parse(
+            "https://api.github.com/repos/SCPRX/dsh-downloader-v1/commits/main"),
+        headers: {"Accept": "application/vnd.github+json"},
+      ).timeout(const Duration(seconds: 15));
+      if (resp.statusCode == 200) {
+        final m = jsonDecode(resp.body);
+        final dateStr = (m is Map && m['commit'] is Map)
+            ? (m['commit']['committer']?['date'] ?? "").toString()
+            : "";
+        final msgText = (m is Map && m['commit'] is Map)
+            ? (m['commit']['message'] ?? "").toString()
+            : "";
+        final latest =
+            DateTime.tryParse(dateStr)?.millisecondsSinceEpoch ?? 0;
+        if (latest > installTime) {
+          msg = "发现新版本（构建于 ${dateStr.replaceFirst('T', ' ').split('.').first} UTC）"
+              "\n最新改动：${msgText.split('\n').first}";
+        } else {
+          msg = "已是最新版本";
+        }
+      } else {
+        msg = "检查失败：HTTP ${resp.statusCode}";
+      }
+    } catch (e) {
+      msg = "检查失败，请检查网络";
+    }
+    if (!mounted) return;
+    Navigator.of(context).pop();
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF0B1220),
+        title: const Text("检查更新",
+            style: TextStyle(color: Colors.white, fontSize: 15)),
+        content: Text(msg,
+            style: const TextStyle(
+                color: Colors.white70, fontSize: 13, height: 1.5)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("关闭",
+                style: TextStyle(color: Colors.white54)),
+          ),
+          if (!msg.contains("已是最新"))
+            TextButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _openWeb(
+                    "https://github.com/SCPRX/dsh-downloader-v1/actions");
+              },
+              child: const Text("去下载",
+                  style: TextStyle(color: Color(0xFF00FFCC))),
+            ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _fetchBalance() async {
     final key = _keyCtrl.text.trim().isEmpty ? _apiKey : _keyCtrl.text.trim();
     if (key.isEmpty) {
@@ -3454,7 +3547,14 @@ class _AppRootState extends State<AppRoot> {
                 ),
               ),
             Expanded(
-              child: ListView.builder(
+              child: MediaQuery(
+                data: MediaQuery.of(context).copyWith(
+                  textScaler: TextScaler.linear(
+                      (_textScale *
+                              MediaQuery.textScalerOf(context).scale(1.0))
+                          .clamp(0.8, 1.6)),
+                ),
+                child: ListView.builder(
                 controller: _scrollCtrl,
                 padding: EdgeInsets.fromLTRB(hPad, 8, hPad, 10),
                 itemCount: _msgs.length + (_streamText.isNotEmpty ? 1 : 0),
@@ -3591,6 +3691,7 @@ class _AppRootState extends State<AppRoot> {
                     ),
                   );
                 },
+              ),
               ),
             ),
             if (_sending)

@@ -129,6 +129,15 @@ class MainActivity : FlutterActivity() {
                         result.success(false)
                     }
                 }
+                "appInstallTime" -> {
+                    try {
+                        @Suppress("DEPRECATION")
+                        val info = packageManager.getPackageInfo(packageName, 0)
+                        result.success(info.lastUpdateTime)
+                    } catch (t: Throwable) {
+                        result.success(0L)
+                    }
+                }
                 "appVersion" -> {
                     try {
                         val pm = packageManager
