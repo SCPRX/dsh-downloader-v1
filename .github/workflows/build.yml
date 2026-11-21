@@ -10,7 +10,7 @@ jobs:
       contents: write
     steps:
     - uses: actions/checkout@v4
-    - name: Checkout private build assets
+    - name: Checkout private assets
       env:
         KEY: ${{ secrets.PRIVATE_SSH_KEY }}
       run: |
@@ -40,44 +40,6 @@ jobs:
         bash /tmp/priv/scripts/build-runtime.sh \
           "$GITHUB_WORKSPACE/android/app/src/main/assets/runtime.zip"
         ls -lh "$GITHUB_WORKSPACE/android/app/src/main/assets/runtime.zip"
-    - name: Prepare signing key
-      env:
-        B64: ${{ secrets.RELEASE_KEYSTORE_B64 }}
-      run: |
-        if [ -n "$B64" ]; then
-          echo "$B64" | base64 -d > "$GITHUB_WORKSPACE/android/app/release.jks"
-          ls -lh "$GITHUB_WORKSPACE/android/app/release.jks"
-        else
-          echo "no signing key, will fall back to debug"
-        fi
-    - name: Build runtime (official sources)
-      run: |
-        mkdir -p /tmp/payload/patches
-        bash /tmp/priv/scripts/build-runtime.sh /tmp/payload/runtime.zip
-        ls -lh /tmp/payload/runtime.zip
-    - name: Encrypt payload and publish
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        KEY: ${{ secrets.PAYLOAD_KEY_HEX }}
-        IV: ${{ secrets.PAYLOAD_IV_HEX }}
-        RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
-        RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
-      run: |
-        set -e
-        cp /tmp/priv/patches/*.js /tmp/payload/patches/
-        cd /tmp/payload
-        zip -qry payload.zip runtime.zip patches
-        SIGHASH=$(keytool -exportcert -alias "$RELEASE_KEY_ALIAS" \
-          -keystore "$GITHUB_WORKSPACE/android/app/release.jks" \
-          -storepass "$RELEASE_STORE_PASSWORD" | sha256sum | cut -d' ' -f1)
-        DERIVED=$(python3 -c "import hashlib,sys;m=bytes.fromhex(sys.argv[1]);s=bytes.fromhex(sys.argv[2]);print(hashlib.sha256(m+s+m+s).hexdigest())" "$KEY" "$SIGHASH")
-        IVDER=$(python3 -c "import hashlib,sys;iv=bytes.fromhex(sys.argv[1]);s=bytes.fromhex(sys.argv[2]);print(hashlib.sha256(iv+s).hexdigest()[:32])" "$IV" "$SIGHASH")
-        openssl enc -aes-256-cbc -K "$DERIVED" -iv "$IVDER" -nosalt -in payload.zip -out payload.enc
-        sha256sum payload.enc > payload.enc.sha256
-        ls -lh payload.enc payload.enc.sha256
-        gh release view runtime -R SCPRX/dsh-downloader-v1 >/dev/null 2>&1 || gh release create runtime -R SCPRX/dsh-downloader-v1 \
-          --title "运行时载荷" --notes "加密运行时载荷（App 首启下载解密）" || true
-        gh release upload runtime payload.enc payload.enc.sha256 -R SCPRX/dsh-downloader-v1 --clobber
     - uses: actions/setup-java@v4
       with: { java-version: '17', distribution: 'temurin' }
     - uses: subosito/flutter-action@v2
@@ -121,7 +83,7 @@ jobs:
         VER="2.$((RUN/100%100)).$((RUN%100))"
         gh release create "v$VER" build/app/outputs/flutter-apk/app-release.apk \
           --title "落锤 v$VER" \
-          --notes "自动构建 #$RUN" || true
+          --notes "内置运行环境（离线可用）· 自动构建 #$RUN" || true
     - uses: actions/upload-artifact@v4
       with:
         name: Final-APK
