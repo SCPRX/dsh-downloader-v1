@@ -5,11 +5,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+    - name: Prepare signing key
+      env:
+        B64: ${{ secrets.RELEASE_KEYSTORE_B64 }}
+      run: |
+        if [ -n "$B64" ]; then
+          echo "$B64" | base64 -d > "$GITHUB_WORKSPACE/android/app/release.jks"
+          ls -lh "$GITHUB_WORKSPACE/android/app/release.jks"
+        fi
     - uses: actions/setup-java@v4
       with: { java-version: '17', distribution: 'temurin' }
     - uses: subosito/flutter-action@v2
       with: { channel: 'stable' }
     - name: Build
+      env:
+        RELEASE_KEYSTORE_PATH: ${{ github.workspace }}/android/app/release.jks
+        RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+        RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+        RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
       run: |
         mkdir -p lib assets
         cp main.dart lib/main.dart
@@ -26,18 +39,16 @@ jobs:
         s = p.read_text()
         s = re.sub(r"https://github\.com/gradle/gradle-distributions/releases/download/v[0-9.]+/", "https://services.gradle.org/distributions/", s)
         p.write_text(s)
-        print(s)
         PY
         flutter pub get
         n=0
         until [ $n -ge 3 ]; do
           flutter build apk --release --target-platform android-arm64 && break
-          n=$((n+1))
-          echo "build failed, retry $n"
-          sleep 15
+          n=$((n+1)); echo "retry $n"; sleep 15
         done
         test -f build/app/outputs/flutter-apk/app-release.apk
     - uses: actions/upload-artifact@v4
       with:
         name: Final-APK
         path: build/app/outputs/flutter-apk/app-release.apk
+        compression-level: 0
