@@ -1894,14 +1894,14 @@ class _AppRootState extends State<AppRoot> {
                                   unawaited(_switchToWeb());
                                 },
                               ),
-                              const ListTile(
+                              ListTile(
                                 dense: true,
-                                leading: Icon(Icons.info_outline,
+                                leading: const Icon(Icons.info_outline,
                                     size: 20, color: Colors.white38),
                                 title: Text("落锤 v$_appVersion",
-                                    style: TextStyle(
+                                    style: const TextStyle(
                                         color: Colors.white38, fontSize: 13)),
-                                subtitle: Text("本地 DSH 引擎 · 原生界面",
+                                subtitle: const Text("本地 DSH 引擎 · 原生界面",
                                     style: TextStyle(
                                         color: Colors.white24, fontSize: 11)),
                               ),
