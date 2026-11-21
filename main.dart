@@ -4089,7 +4089,10 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
                   if (i == _msgs.length && _thinkingText.isNotEmpty) {
                     return Padding(
                       padding: const EdgeInsets.symmetric(vertical: 4),
-                      child: _ThinkingBlock(text: _thinkingText, streaming: true),
+                      child: _ThinkingBlock(
+                          text: _thinkingText,
+                          streaming: true,
+                          scale: _textScale),
                     );
                   }
                   final isStream = i == streamIndex;
@@ -4133,11 +4136,15 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
                               ),
                             ),
                           if (!isStream && _msgs[i].kind == 3)
-                            _ThinkingBlock(text: text, streaming: false)
+                            _ThinkingBlock(
+                                text: text,
+                                streaming: false,
+                                scale: _textScale)
                           else
                           _Bubble(
                         text: text,
                         mine: mine,
+                        scale: _textScale,
                         kind: isStream ? 0 : _msgs[i].kind,
                         ts: isStream ? null : _msgs[i].ts,
                             onLongPress: () => _messageActions(
@@ -4643,7 +4650,9 @@ class _StarryPainter extends CustomPainter {
 class _ThinkingBlock extends StatelessWidget {
   final String text;
   final bool streaming;
-  const _ThinkingBlock({required this.text, required this.streaming});
+  final double scale;
+  const _ThinkingBlock(
+      {required this.text, required this.streaming, this.scale = 1.0});
 
   @override
   Widget build(BuildContext context) {
@@ -4675,9 +4684,9 @@ class _ThinkingBlock extends StatelessWidget {
             text,
             maxLines: streaming ? 6 : 40,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
+            style: TextStyle(
               color: Color(0x99FFFFFF),
-              fontSize: 12.5,
+              fontSize: 12.5 * scale,
               height: 1.5,
               fontStyle: FontStyle.italic,
               decoration: TextDecoration.none,
@@ -4714,6 +4723,7 @@ class _Bubble extends StatelessWidget {
   final bool mine;
   final int kind;
   final int? ts;
+  final double scale;
   final VoidCallback onLongPress;
   const _Bubble({
     required this.text,
@@ -4721,6 +4731,7 @@ class _Bubble extends StatelessWidget {
     required this.kind,
     required this.onLongPress,
     this.ts,
+    this.scale = 1.0,
   });
 
   @override
@@ -4763,7 +4774,7 @@ class _Bubble extends StatelessWidget {
               mine ? const Color(0xFF14524A) : const Color(0xFF141A22),
           borderRadius: BorderRadius.circular(14),
         ),
-        child: _MarkdownBody(text: text),
+        child: _MarkdownBody(text: text, scale: scale),
       ),
     );
   }
@@ -4786,7 +4797,8 @@ class _Bubble extends StatelessWidget {
 
 class _MarkdownBody extends StatelessWidget {
   final String text;
-  const _MarkdownBody({required this.text});
+  final double scale;
+  const _MarkdownBody({required this.text, this.scale = 1.0});
 
   @override
   Widget build(BuildContext context) {
@@ -4821,9 +4833,9 @@ class _MarkdownBody extends StatelessWidget {
 
   Widget _plain(String t) => Text(
         t,
-        style: const TextStyle(
+        style: TextStyle(
           color: Colors.white,
-          fontSize: 15,
+          fontSize: 15 * scale,
           height: 1.5,
           decoration: TextDecoration.none,
           decorationColor: Colors.transparent,
@@ -4869,9 +4881,9 @@ class _MarkdownBody extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
             child: Text(
               code,
-              style: const TextStyle(
+              style: TextStyle(
                 color: Color(0xFFDDEFEA),
-                fontSize: 12.5,
+                fontSize: 12.5 * scale,
                 height: 1.45,
                 fontFamily: 'monospace',
                 decoration: TextDecoration.none,
