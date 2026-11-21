@@ -219,7 +219,7 @@ class _AppRootState extends State<AppRoot> {
         setState(() {
           _phase = "chat";
           _failed = false;
-          _status = "还没配置 API Key，点右上角⚙设置填写";
+          _status = "";
         });
       }
       final bool installed = await _ch.invokeMethod<bool>('checkEnv') ?? false;
@@ -303,7 +303,7 @@ class _AppRootState extends State<AppRoot> {
       setState(() {
         _phase = "chat";
         _failed = false;
-        _status = "还没配置 API Key，点右上角⚙设置填写";
+        _status = "";
       });
       return;
     }
@@ -1876,7 +1876,7 @@ class _AppRootState extends State<AppRoot> {
                                 dense: true,
                                 leading: Icon(Icons.info_outline,
                                     size: 20, color: Colors.white38),
-                                title: Text("落锤 1.1.0",
+                                title: Text("落锤 1.2.0",
                                     style: TextStyle(
                                         color: Colors.white38, fontSize: 13)),
                                 subtitle: Text("本地 DSH 引擎 · 原生界面",
