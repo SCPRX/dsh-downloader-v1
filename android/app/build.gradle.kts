@@ -30,10 +30,13 @@ android {
         // You can force using the value of versionCode by specifying the `-P force-version-code-ignoring-abi=true`
         // flag during build.
         versionCode = ciBuildNumber ?: flutter.versionCode
-        versionName = if (ciBuildNumber != null)
-            "2.0." + ciBuildNumber.toString()
-        else
+        versionName = if (ciBuildNumber != null) {
+            // 全自动：2.<每100次构建升1>.<余数>
+            "2." + (ciBuildNumber / 100).toString() + "." +
+                (ciBuildNumber % 100).toString()
+        } else {
             flutter.versionName
+        }
     }
 
     buildTypes {
