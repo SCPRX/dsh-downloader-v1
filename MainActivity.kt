@@ -763,9 +763,9 @@ class MainActivity : FlutterActivity() {
         } catch (t: Throwable) {
             "执行失败: " + t.message
         }
-    } catch (_: Throwable) {
-        false
-    }    private fun extractEnv(zipFile: File) {
+    }
+
+    private fun extractEnv(zipFile: File) {
         Thread {
             try {
                 if (!zipFile.exists()) {
