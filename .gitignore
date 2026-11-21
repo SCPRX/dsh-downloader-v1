@@ -12,8 +12,8 @@ local.properties
 captures/
 
 # CI-generated
-lib/
-assets/
+/lib/
+/assets/
 android/app/src/main/assets/runtime.zip
 
 # 杂项
