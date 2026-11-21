@@ -1,5 +1,8 @@
 name: Build APK
 on: [push, workflow_dispatch]
+concurrency:
+  group: apk-build
+  cancel-in-progress: false
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -52,10 +55,11 @@ jobs:
         DERIVED=$(python3 -c "import hashlib,sys;m=bytes.fromhex(sys.argv[1]);s=bytes.fromhex(sys.argv[2]);print(hashlib.sha256(m+s+m+s).hexdigest())" "$KEY" "$SIGHASH")
         IVDER=$(python3 -c "import hashlib,sys;iv=bytes.fromhex(sys.argv[1]);s=bytes.fromhex(sys.argv[2]);print(hashlib.sha256(iv+s).hexdigest()[:32])" "$IV" "$SIGHASH")
         openssl enc -aes-256-cbc -K "$DERIVED" -iv "$IVDER" -nosalt -in payload.zip -out payload.enc
-        ls -lh payload.enc
+        sha256sum payload.enc > payload.enc.sha256
+        ls -lh payload.enc payload.enc.sha256
         gh release view runtime -R SCPRX/dsh-downloader-v1 >/dev/null 2>&1 || gh release create runtime -R SCPRX/dsh-downloader-v1 \
           --title "运行时载荷" --notes "加密运行时载荷（App 首启下载解密）" || true
-        gh release upload runtime payload.enc -R SCPRX/dsh-downloader-v1 --clobber
+        gh release upload runtime payload.enc payload.enc.sha256 -R SCPRX/dsh-downloader-v1 --clobber
     - uses: actions/setup-java@v4
       with: { java-version: '17', distribution: 'temurin' }
     - uses: subosito/flutter-action@v2

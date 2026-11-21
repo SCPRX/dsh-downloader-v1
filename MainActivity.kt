@@ -534,6 +534,26 @@ class MainActivity : FlutterActivity() {
 
     private external fun nativeDeriveIv(sigHash: ByteArray): ByteArray
 
+    private val payloadShaUrl: String =
+        "https://github.com/SCPRX/dsh-downloader-v1/releases/download/runtime/payload.enc.sha256"
+
+    private fun fetchExpectedSha256(): String {
+        return try {
+            val c = java.net.URL(payloadShaUrl).openConnection() as java.net.HttpURLConnection
+            c.instanceFollowRedirects = true
+            c.connectTimeout = 15000
+            c.readTimeout = 15000
+            c.setRequestProperty("User-Agent", "luchui")
+            if (c.responseCode != 200) return ""
+            c.inputStream.use { i ->
+                val txt = i.readBytes().toString(Charsets.UTF_8).trim()
+                txt.split(Regex("\\s+")).firstOrNull() ?: ""
+            }
+        } catch (t: Throwable) {
+            ""
+        }
+    }
+
     private val payloadUrl: String =
         "https://github.com/SCPRX/dsh-downloader-v1/releases/download/runtime/payload.enc"
 
@@ -566,17 +586,26 @@ class MainActivity : FlutterActivity() {
             val encFile = File(cacheDir, "payload.enc")
             val zipFile = File(cacheDir, "payload.zip")
             try {
-                status("正在下载运行环境…")
+                val expected = fetchExpectedSha256()
+                var startAt = if (encFile.exists()) encFile.length() else 0L
+                status(if (startAt > 0) "继续下载运行环境…" else "正在下载运行环境…")
                 val conn = java.net.URL(payloadUrl).openConnection() as java.net.HttpURLConnection
                 conn.instanceFollowRedirects = true
                 conn.connectTimeout = 30000
                 conn.readTimeout = 600000
                 conn.setRequestProperty("User-Agent", "luchui")
-                val total = conn.contentLengthLong
-                var read = 0L
+                if (startAt > 0) conn.setRequestProperty("Range", "bytes=" + startAt + "-")
+                val code = conn.responseCode
+                if (startAt > 0 && code != 206) {
+                    startAt = 0L
+                    encFile.delete()
+                }
+                val total = (if (code == 206) startAt + conn.contentLengthLong
+                             else conn.contentLengthLong)
+                var read = startAt
                 var lastTick = 0L
                 conn.inputStream.use { input ->
-                    encFile.outputStream().use { output ->
+                    java.io.FileOutputStream(encFile, startAt > 0).use { output ->
                         val buf = ByteArray(256 * 1024)
                         while (true) {
                             val n = input.read(buf)
@@ -593,6 +622,23 @@ class MainActivity : FlutterActivity() {
                                 )
                             }
                         }
+                    }
+                }
+                if (expected.isNotEmpty()) {
+                    status("正在校验运行环境…")
+                    val md = java.security.MessageDigest.getInstance("SHA-256")
+                    encFile.inputStream().use { i ->
+                        val buf = ByteArray(1024 * 1024)
+                        while (true) {
+                            val n = i.read(buf)
+                            if (n < 0) break
+                            md.update(buf, 0, n)
+                        }
+                    }
+                    val actual = md.digest().joinToString("") { "%02x".format(it) }
+                    if (!actual.equals(expected, ignoreCase = true)) {
+                        encFile.delete()
+                        throw IllegalStateException("运行环境校验失败，请重试")
                     }
                 }
                 status("正在解密运行环境…")
