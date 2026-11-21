@@ -1792,6 +1792,26 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
                                     ),
                                 ],
                               ),
+                              const SizedBox(height: 10),
+                              Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF0B1220),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border:
+                                      Border.all(color: const Color(0x18FFFFFF)),
+                                ),
+                                child: Text(
+                                  "示例：这是对话文字的效果预览。",
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 15 * _textScale,
+                                    height: 1.5,
+                                    decoration: TextDecoration.none,
+                                  ),
+                                ),
+                              ),
                               const SizedBox(height: 14),
                               const Text("聊天背景",
                                   style: TextStyle(
@@ -3968,10 +3988,7 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
             Expanded(
               child: MediaQuery(
                 data: MediaQuery.of(context).copyWith(
-                  textScaler: TextScaler.linear(
-                      (_textScale *
-                              MediaQuery.textScalerOf(context).scale(1.0))
-                          .clamp(0.8, 1.6)),
+                  textScaler: TextScaler.noScaling,
                 ),
                 child: ListView.builder(
                 controller: _scrollCtrl,
