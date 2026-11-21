@@ -4,6 +4,7 @@ import android.content.Intent
 import android.speech.tts.TextToSpeech
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.os.Build
@@ -152,7 +153,7 @@ class MainActivity : FlutterActivity() {
                         var version = "unknown"
                         if (pkg.exists()) {
                             val txt = pkg.readText()
-                            val m = Regex("\"version\"\s*:\s*\"([^\"]+)\"").find(txt)
+                            val m = Regex("\"version\"\\s*:\\s*\"([^\"]+)\"").find(txt)
                             if (m != null) version = m.groupValues[1]
                         }
                         result.success(version)
