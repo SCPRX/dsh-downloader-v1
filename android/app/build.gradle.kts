@@ -18,7 +18,8 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
+        // 构建号：优先用 CI 的构建次数（自动递增），本地构建回退到 pubspec 的值
+        val ciBuildNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()
         applicationId = "com.dsh.dshapp"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
@@ -28,7 +29,7 @@ android {
         // is added automatically by Flutter. (https://developer.android.com/studio/build/configure-apk-splits#configure-APK-versions)
         // You can force using the value of versionCode by specifying the `-P force-version-code-ignoring-abi=true`
         // flag during build.
-        versionCode = flutter.versionCode
+        versionCode = ciBuildNumber ?: flutter.versionCode
         versionName = flutter.versionName
     }
 
