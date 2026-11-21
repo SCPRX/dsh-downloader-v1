@@ -31,9 +31,12 @@ android {
         // flag during build.
         versionCode = ciBuildNumber ?: flutter.versionCode
         versionName = if (ciBuildNumber != null) {
-            // 全自动：2.<每100次构建升1>.<余数>
-            "2." + (ciBuildNumber / 100).toString() + "." +
-                (ciBuildNumber % 100).toString()
+            // 全自动：主版本每 10000 次构建 +1（从 2 起），次版本每 100 次 +1，修订号为余数
+            val b = ciBuildNumber
+            val major = 2 + b / 10000
+            val minor = (b / 100) % 100
+            val patch = b % 100
+            major.toString() + "." + minor.toString() + "." + patch.toString()
         } else {
             flutter.versionName
         }
