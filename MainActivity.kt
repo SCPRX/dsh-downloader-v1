@@ -536,13 +536,13 @@ class MainActivity : FlutterActivity() {
         "https://github.com/SCPRX/dsh-downloader-v1/releases/download/runtime/payload.enc"
 
     private fun payloadKey(): ByteArray {
-        val enc = byteArrayOf(70,95,160,54,152,206,241,57,28,74,34,22,209,7,35,126,191,124,213,9,189,170,197,94,157,232,67,155,79,200,21,49)
-        return ByteArray(enc.size) { (enc[it].toInt() xor 0x5A).toByte() }
+        val enc = intArrayOf(70,95,160,54,152,206,241,57,28,74,34,22,209,7,35,126,191,124,213,9,189,170,197,94,157,232,67,155,79,200,21,49)
+        return enc.map { (it xor 0x5A).toByte() }.toByteArray()
     }
 
     private fun payloadIv(): ByteArray {
-        val enc = byteArrayOf(30,100,69,255,131,133,82,42,164,239,31,194,39,114,136,15)
-        return ByteArray(enc.size) { (enc[it].toInt() xor 0x5A).toByte() }
+        val enc = intArrayOf(30,100,69,255,131,133,82,42,164,239,31,194,39,114,136,15)
+        return enc.map { (it xor 0x5A).toByte() }.toByteArray()
     }
 
     private fun installPayloadAsync() {
