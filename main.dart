@@ -104,6 +104,9 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
   bool _showKey = false;
   double _textScale = 1.0;
   double _cloudSpeed = 0.04;
+  bool _enterSends = true;
+  bool _inputExpanded = true;
+  final FocusNode _inputFocus = FocusNode();
   String _lastSessionId = "";
   String _balance = "";
   bool _balanceLoading = false;
@@ -154,6 +157,12 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _inputFocus.addListener(() {
+      if (!mounted) return;
+      if (!_inputFocus.hasFocus && _inputCtrl.text.trim().isNotEmpty) {
+        setState(() => _inputExpanded = false);
+      }
+    });
     SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
       statusBarIconBrightness: Brightness.light,
@@ -209,6 +218,7 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _inputFocus.dispose();
     _keepAliveTimer?.cancel();
     _startupTimer?.cancel();
     super.dispose();
@@ -359,6 +369,7 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
           _model = (m['model'] ?? "deepseek-flash").toString();
           _textScale = (m['textScale'] as num?)?.toDouble() ?? 1.0;
           _cloudSpeed = (m['cloudSpeed'] as num?)?.toDouble() ?? 0.04;
+          _enterSends = (m['enterSends'] as bool?) ?? true;
           _lastSessionId = (m['sessionKey'] ?? "").toString();
           _reasoning = (m['reasoning'] ?? "auto").toString();
           _workDir = (m['workDir'] ?? "/root").toString();
@@ -376,6 +387,7 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
         'model': _model,
         'textScale': _textScale,
         'cloudSpeed': _cloudSpeed,
+        'enterSends': _enterSends,
         'sessionKey': _sessionKey,
         'reasoning': _reasoning,
         'workDir': _workDir,
@@ -1694,6 +1706,40 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
                                           unawaited(_saveSettings());
                                         },
                                       ),
+                                    ),
+                                ],
+                              ),
+                              const SizedBox(height: 14),
+                              const Text("回车键",
+                                  style: TextStyle(
+                                      color: Colors.white, fontSize: 14)),
+                              const SizedBox(height: 8),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: [
+                                  for (final item in const [
+                                    ["发送", true],
+                                    ["换行", false],
+                                  ])
+                                    ChoiceChip(
+                                      label: Text(item[0] as String,
+                                          style: TextStyle(
+                                              fontSize: 12,
+                                              color: (_enterSends ==
+                                                      (item[1] as bool))
+                                                  ? const Color(0xFF03211D)
+                                                  : Colors.white70)),
+                                      selected:
+                                          _enterSends == (item[1] as bool),
+                                      selectedColor: const Color(0xFF00FFCC),
+                                      backgroundColor:
+                                          const Color(0xFF15202B),
+                                      onSelected: (_) {
+                                        setState(() =>
+                                            _enterSends = item[1] as bool);
+                                        unawaited(_saveSettings());
+                                      },
                                     ),
                                 ],
                               ),
@@ -3818,14 +3864,25 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
                   Expanded(
                     child: TextField(
                       controller: _inputCtrl,
+                      focusNode: _inputFocus,
+                      onTap: () {
+                        if (!_inputExpanded) {
+                          setState(() => _inputExpanded = true);
+                        }
+                      },
                       style: const TextStyle(
                           color: Colors.white,
                           fontSize: 15,
                           decoration: none,
                           decorationColor: Colors.transparent),
                       minLines: 1,
-                      maxLines: 4,
-                      onSubmitted: (_) => _send(),
+                      maxLines: _inputExpanded ? 4 : 1,
+                      textInputAction: _enterSends
+                          ? TextInputAction.send
+                          : TextInputAction.newline,
+                      onSubmitted: (_) {
+                        if (_enterSends) _send();
+                      },
                       decoration: InputDecoration(
                         hintText: "说点什么…",
                         hintStyle: const TextStyle(
