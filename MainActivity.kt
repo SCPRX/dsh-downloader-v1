@@ -523,6 +523,29 @@ class MainActivity : FlutterActivity() {
     private fun isEnvReady(): Boolean =
         prootBin.exists() && loaderBin.exists() && guestNode.exists() && guestHarness.exists()
 
+    private fun applyPatchesFromAssets() {
+        val pats = listOf(
+            "patches/dsh-session-persistence-jsonl__index.js" to
+                "rootfs/opt/dsh/node_modules/@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js",
+            "patches/dsh-attachment-local__index.js" to
+                "rootfs/opt/dsh/node_modules/@deepseek-ai/dsh-attachment-local/lib/index.js"
+        )
+        for ((asset, destRel) in pats) {
+            try {
+                val dest = File(envDir, destRel)
+                if (!dest.exists()) continue
+                assets.open(asset).use { input ->
+                    dest.outputStream().use { output ->
+                        input.copyTo(output, 256 * 1024)
+                    }
+                }
+                logEngine("[patch] " + destRel)
+            } catch (t: Throwable) {
+                logEngine("[patch] skip " + destRel + ": " + t.message)
+            }
+        }
+    }
+
     private fun runShell(cmd: String): String {
         if (!isEnvReady()) return "环境还没装好"
         return try {
@@ -813,6 +836,7 @@ class MainActivity : FlutterActivity() {
                     "DEEPSEEK_API_KEY='$apiKey' " +
                     "/opt/node/bin/node --expose-internals " +
                     "/opt/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js --profile sdk"
+                applyPatchesFromAssets()
                 logEngine("[cmd] " + cmd)
                 val p = ProcessBuilder("/system/bin/sh", "-c", cmd)
                     .directory(workDir)
@@ -951,6 +975,7 @@ class MainActivity : FlutterActivity() {
                     "DEEPSEEK_API_KEY='$apiKey' " +
                     "/opt/node/bin/node --expose-internals " +
                     "/opt/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js web --no-open --port $port"
+                applyPatchesFromAssets()
                 logEngine("[webcmd] " + cmd)
                 val p = ProcessBuilder("/system/bin/sh", "-c", cmd)
                     .directory(workDir)
