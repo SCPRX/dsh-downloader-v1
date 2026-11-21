@@ -67,7 +67,7 @@ class AppRoot extends StatefulWidget {
   State<AppRoot> createState() => _AppRootState();
 }
 
-class _AppRootState extends State<AppRoot> {
+class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
   static const MethodChannel _ch = MethodChannel('com.dsh.dshapp/status');
 
   String _phase = 'env';
@@ -100,6 +100,7 @@ class _AppRootState extends State<AppRoot> {
   String _testResult = "";
   String _engineLog = "";
   String _appVersion = "2.0.0";
+  String _engineVersion = "";
   bool _showKey = false;
   double _textScale = 1.0;
   double _cloudSpeed = 0.04;
@@ -147,9 +148,12 @@ class _AppRootState extends State<AppRoot> {
   WebViewController? _web;
   String _engineUrl = "http://127.0.0.1:3090";
 
+  bool _appActive = true;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
       statusBarIconBrightness: Brightness.light,
@@ -198,7 +202,13 @@ class _AppRootState extends State<AppRoot> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _appActive = state == AppLifecycleState.resumed;
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _keepAliveTimer?.cancel();
     _startupTimer?.cancel();
     super.dispose();
@@ -217,6 +227,8 @@ class _AppRootState extends State<AppRoot> {
       try {
         final v = await _ch.invokeMethod<String>('appVersion');
         if (v != null && v.isNotEmpty) _appVersion = v;
+        final ev = await _ch.invokeMethod<String>('engineInfo');
+        if (ev != null && ev.isNotEmpty) _engineVersion = ev;
       } catch (_) {}
       if (_apiKey.isNotEmpty) unawaited(_fetchBalance());
       if (_apiKey.isEmpty) {
@@ -866,6 +878,26 @@ class _AppRootState extends State<AppRoot> {
         ),
         actions: [
           TextButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: _engineLog));
+              ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+                const SnackBar(
+                    content: Text("日志已复制"),
+                    duration: Duration(milliseconds: 900)),
+              );
+            },
+            child: const Text("复制",
+                style: TextStyle(color: Colors.white54)),
+          ),
+          TextButton(
+            onPressed: () {
+              unawaited(
+                  _ch.invokeMethod('shareText', {'text': _engineLog}));
+            },
+            child: const Text("分享",
+                style: TextStyle(color: Colors.white54)),
+          ),
+          TextButton(
             onPressed: () => Navigator.pop(ctx),
             child: const Text("关闭", style: TextStyle(color: Color(0xFF00FFCC))),
           ),
@@ -1036,6 +1068,9 @@ class _AppRootState extends State<AppRoot> {
         });
         _saveMsgs();
         _scrollToEnd();
+        if (!_appActive && finalText.isNotEmpty) {
+          unawaited(_ch.invokeMethod('notifyDone', {'text': finalText}));
+        }
       } else if (type == 'tool/call') {
         final name = (data is Map
                 ? (data['toolName'] ?? data['name'] ?? data['tool'])
@@ -1910,8 +1945,11 @@ class _AppRootState extends State<AppRoot> {
                                 title: Text("落锤 v$_appVersion",
                                     style: const TextStyle(
                                         color: Colors.white38, fontSize: 13)),
-                                subtitle: const Text("本地 DSH 引擎 · 原生界面",
-                                    style: TextStyle(
+                                subtitle: Text(
+                                    _engineVersion.isEmpty
+                                        ? "本地 DSH 引擎 · 原生界面"
+                                        : "DSH 引擎 $_engineVersion · 原生界面",
+                                    style: const TextStyle(
                                         color: Colors.white24, fontSize: 11)),
                               ),
                             ],
@@ -2123,6 +2161,24 @@ class _AppRootState extends State<AppRoot> {
         ),
       ),
     );
+  }
+
+  Future<void> _voiceInput() async {
+    try {
+      final text = await _ch.invokeMethod<String>('startVoice');
+      if (!mounted) return;
+      if (text == null || text.trim().isEmpty) {
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+          const SnackBar(content: Text("没听到声音，再试一次")),
+        );
+        return;
+      }
+      setState(() {
+        _inputCtrl.text = text.trim();
+        _inputCtrl.selection =
+            TextSelection.fromPosition(TextPosition(offset: _inputCtrl.text.length));
+      });
+    } catch (_) {}
   }
 
   Future<void> _attachImage() async {
@@ -3751,6 +3807,12 @@ class _AppRootState extends State<AppRoot> {
                     tooltip: "发送图片",
                     onPressed: _sending ? null : _attachImage,
                     icon: const Icon(Icons.add_photo_alternate_outlined,
+                        size: 22, color: Color(0xCC00FFCC)),
+                  ),
+                  IconButton(
+                    tooltip: "语音输入",
+                    onPressed: _sending ? null : _voiceInput,
+                    icon: const Icon(Icons.mic_none,
                         size: 22, color: Color(0xCC00FFCC)),
                   ),
                   Expanded(

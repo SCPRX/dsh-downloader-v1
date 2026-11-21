@@ -2,6 +2,11 @@ package com.dsh.dshapp
 
 import android.content.Intent
 import android.speech.tts.TextToSpeech
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.os.Build
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
@@ -63,6 +68,9 @@ class MainActivity : FlutterActivity() {
 
     private var pendingPick: MethodChannel.Result? = null
     private var tts: TextToSpeech? = null
+    private var speech: SpeechRecognizer? = null
+    private var pendingVoice: MethodChannel.Result? = null
+    private var pendingVoiceAction = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -136,6 +144,67 @@ class MainActivity : FlutterActivity() {
                         result.success(info.lastUpdateTime)
                     } catch (t: Throwable) {
                         result.success(0L)
+                    }
+                }
+                "engineInfo" -> {
+                    try {
+                        val pkg = File(envDir, "rootfs/opt/dsh/node_modules/@deepseek-ai/dsh/package.json")
+                        var version = "unknown"
+                        if (pkg.exists()) {
+                            val txt = pkg.readText()
+                            val m = Regex("\"version\"\s*:\s*\"([^\"]+)\"").find(txt)
+                            if (m != null) version = m.groupValues[1]
+                        }
+                        result.success(version)
+                    } catch (t: Throwable) {
+                        result.success("unknown")
+                    }
+                }
+                "notifyDone" -> {
+                    val text = call.argument<String>("text") ?: ""
+                    try {
+                        val nm = getSystemService(NotificationManager::class.java)
+                        if (Build.VERSION.SDK_INT >= 26) {
+                            nm.createNotificationChannel(
+                                NotificationChannel("done", "回答完成", NotificationManager.IMPORTANCE_DEFAULT)
+                            )
+                        }
+                        val builder = if (Build.VERSION.SDK_INT >= 26)
+                            Notification.Builder(this, "done")
+                        else
+                            @Suppress("DEPRECATION") Notification.Builder(this)
+                        val intent = Intent(this, MainActivity::class.java)
+                            .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                        val pi = android.app.PendingIntent.getActivity(
+                            this, 1, intent,
+                            android.app.PendingIntent.FLAG_UPDATE_CURRENT or
+                                (if (Build.VERSION.SDK_INT >= 23) android.app.PendingIntent.FLAG_IMMUTABLE else 0)
+                        )
+                        builder.setSmallIcon(android.R.drawable.stat_notify_chat)
+                            .setContentTitle("落锤")
+                            .setContentText(if (text.length > 80) text.substring(0, 80) else text)
+                            .setContentIntent(pi)
+                            .setAutoCancel(true)
+                        nm.notify(7, builder.build())
+                        result.success(true)
+                    } catch (t: Throwable) {
+                        result.success(false)
+                    }
+                }
+                "startVoice" -> {
+                    try {
+                        pendingVoice = result
+                        if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) !=
+                            android.content.pm.PackageManager.PERMISSION_GRANTED
+                        ) {
+                            requestPermissions(
+                                arrayOf(android.Manifest.permission.RECORD_AUDIO), 5151
+                            )
+                        } else {
+                            beginVoice()
+                        }
+                    } catch (t: Throwable) {
+                        result.error("VOICE_FAIL", t.message, null)
                     }
                 }
                 "appVersion" -> {
@@ -269,6 +338,66 @@ class MainActivity : FlutterActivity() {
                     result.success(true)
                 }
                 else -> result.notImplemented()
+            }
+        }
+    }
+
+    private fun beginVoice() {
+        try {
+            speech?.destroy()
+            speech = SpeechRecognizer.createSpeechRecognizer(this)
+            speech?.setRecognitionListener(object : android.speech.RecognitionListener {
+                override fun onReadyForSpeech(params: android.os.Bundle?) {}
+                override fun onBeginningOfSpeech() {}
+                override fun onRmsChanged(rmsdB: Float) {}
+                override fun onBufferReceived(buffer: ByteArray?) {}
+                override fun onEndOfSpeech() {}
+
+                override fun onError(error: Int) {
+                    val r = pendingVoice
+                    pendingVoice = null
+                    r?.success("")
+                }
+
+                override fun onResults(results: android.os.Bundle?) {
+                    val list = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    val r = pendingVoice
+                    pendingVoice = null
+                    r?.success(list?.firstOrNull() ?: "")
+                }
+
+                override fun onPartialResults(partialResults: android.os.Bundle?) {}
+                override fun onEvent(eventType: Int, params: android.os.Bundle?) {}
+            })
+            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+            intent.putExtra(
+                RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
+            )
+            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN")
+            intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+            speech?.startListening(intent)
+            logEngine("[voice] listening")
+        } catch (t: Throwable) {
+            val r = pendingVoice
+            pendingVoice = null
+            r?.success("")
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int, permissions: Array<out String>, grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 5151) {
+            if (grantResults.isNotEmpty() &&
+                grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED
+            ) {
+                beginVoice()
+            } else {
+                val r = pendingVoice
+                pendingVoice = null
+                r?.success("")
             }
         }
     }
