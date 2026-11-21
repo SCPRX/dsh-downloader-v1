@@ -868,7 +868,9 @@ class MainActivity : FlutterActivity() {
                     for ((path, target) in linkCandidates) {
                         try {
                             val f = File(path)
-                            if (f.exists()) continue
+                            if (f.exists()) {
+                                if (f.length() in 1L..300L) f.delete() else continue
+                            }
                             val t = File(f.parentFile, target)
                             if (!t.exists()) continue
                             java.nio.file.Files.createSymbolicLink(
