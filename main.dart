@@ -103,8 +103,6 @@ class _AppRootState extends State<AppRoot> {
   bool _showKey = false;
   double _textScale = 1.0;
   double _cloudSpeed = 0.04;
-  double _starSpeed = 1.0;
-  double _starScale = 1.0;
   String _lastSessionId = "";
   String _balance = "";
   bool _balanceLoading = false;
@@ -221,7 +219,7 @@ class _AppRootState extends State<AppRoot> {
         setState(() {
           _phase = "chat";
           _failed = false;
-          _status = "";
+          _status = "还没配置 API Key，点右上角⚙设置填写";
         });
       }
       final bool installed = await _ch.invokeMethod<bool>('checkEnv') ?? false;
@@ -305,7 +303,7 @@ class _AppRootState extends State<AppRoot> {
       setState(() {
         _phase = "chat";
         _failed = false;
-        _status = "";
+        _status = "还没配置 API Key，点右上角⚙设置填写";
       });
       return;
     }
@@ -345,8 +343,6 @@ class _AppRootState extends State<AppRoot> {
           _model = (m['model'] ?? "deepseek-flash").toString();
           _textScale = (m['textScale'] as num?)?.toDouble() ?? 1.0;
           _cloudSpeed = (m['cloudSpeed'] as num?)?.toDouble() ?? 0.04;
-          _starSpeed = (m['starSpeed'] as num?)?.toDouble() ?? 1.0;
-          _starScale = (m['starScale'] as num?)?.toDouble() ?? 1.0;
           _lastSessionId = (m['sessionKey'] ?? "").toString();
           _reasoning = (m['reasoning'] ?? "auto").toString();
           _workDir = (m['workDir'] ?? "/root").toString();
@@ -364,8 +360,6 @@ class _AppRootState extends State<AppRoot> {
         'model': _model,
         'textScale': _textScale,
         'cloudSpeed': _cloudSpeed,
-        'starSpeed': _starSpeed,
-        'starScale': _starScale,
         'sessionKey': _sessionKey,
         'reasoning': _reasoning,
         'workDir': _workDir,
@@ -1354,7 +1348,7 @@ class _AppRootState extends State<AppRoot> {
       child: Stack(
         children: [
           Positioned.fill(
-            child: _StarField(speed: _cloudSpeed, starSpeed: _starSpeed, starScale: _starScale),
+            child: _StarField(speed: _cloudSpeed),
           ),
           SafeArea(
             child: Column(
@@ -1690,76 +1684,6 @@ class _AppRootState extends State<AppRoot> {
                                           const Color(0xFF15202B),
                                       onSelected: (_) {
                                         setState(() => _cloudSpeed =
-                                            item[1] as double);
-                                        unawaited(_saveSettings());
-                                      },
-                                    ),
-                                ],
-                              ),
-                              const SizedBox(height: 14),
-                              const Text("星星大小",
-                                  style: TextStyle(
-                                      color: Colors.white, fontSize: 14)),
-                              const SizedBox(height: 8),
-                              Wrap(
-                                spacing: 8,
-                                runSpacing: 8,
-                                children: [
-                                  for (final item in const [
-                                    ["小", 0.7],
-                                    ["中", 1.0],
-                                    ["大", 1.5],
-                                  ])
-                                    ChoiceChip(
-                                      label: Text(item[0] as String,
-                                          style: TextStyle(
-                                              fontSize: 12,
-                                              color: (_starScale ==
-                                                      (item[1] as double))
-                                                  ? const Color(0xFF03211D)
-                                                  : Colors.white70)),
-                                      selected:
-                                          _starScale == (item[1] as double),
-                                      selectedColor: const Color(0xFF00FFCC),
-                                      backgroundColor:
-                                          const Color(0xFF15202B),
-                                      onSelected: (_) {
-                                        setState(() => _starScale =
-                                            item[1] as double);
-                                        unawaited(_saveSettings());
-                                      },
-                                    ),
-                                ],
-                              ),
-                              const SizedBox(height: 14),
-                              const Text("星星闪烁速度",
-                                  style: TextStyle(
-                                      color: Colors.white, fontSize: 14)),
-                              const SizedBox(height: 8),
-                              Wrap(
-                                spacing: 8,
-                                runSpacing: 8,
-                                children: [
-                                  for (final item in const [
-                                    ["慢", 0.5],
-                                    ["中", 1.0],
-                                    ["快", 2.2],
-                                  ])
-                                    ChoiceChip(
-                                      label: Text(item[0] as String,
-                                          style: TextStyle(
-                                              fontSize: 12,
-                                              color: (_starSpeed ==
-                                                      (item[1] as double))
-                                                  ? const Color(0xFF03211D)
-                                                  : Colors.white70)),
-                                      selected:
-                                          _starSpeed == (item[1] as double),
-                                      selectedColor: const Color(0xFF00FFCC),
-                                      backgroundColor:
-                                          const Color(0xFF15202B),
-                                      onSelected: (_) {
-                                        setState(() => _starSpeed =
                                             item[1] as double);
                                         unawaited(_saveSettings());
                                       },
@@ -2253,7 +2177,7 @@ class _AppRootState extends State<AppRoot> {
     return Stack(
       fit: StackFit.expand,
       children: [
-        _StarField(speed: _cloudSpeed, starSpeed: _starSpeed, starScale: _starScale),
+        _StarField(speed: _cloudSpeed),
         Container(
           color: const Color(0xB303060A),
           child: SafeArea(
@@ -2503,7 +2427,7 @@ class _AppRootState extends State<AppRoot> {
     return Stack(
       fit: StackFit.expand,
       children: [
-        _StarField(speed: _cloudSpeed, starSpeed: _starSpeed, starScale: _starScale),
+        _StarField(speed: _cloudSpeed),
         _buildFilesBody(),
       ],
     );
@@ -3211,7 +3135,7 @@ class _AppRootState extends State<AppRoot> {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          _StarField(speed: _cloudSpeed, starSpeed: _starSpeed, starScale: _starScale),
+          _StarField(speed: _cloudSpeed),
           Container(color: const Color(0xB80A1018)),
           SafeArea(
         child: Column(
@@ -3408,7 +3332,7 @@ class _AppRootState extends State<AppRoot> {
       body: Stack(
         fit: StackFit.expand,
         children: [
-          _StarField(speed: _cloudSpeed, starSpeed: _starSpeed, starScale: _starScale),
+          _StarField(speed: _cloudSpeed),
           SafeArea(
         child: Column(
           children: [
@@ -3942,10 +3866,7 @@ class _TextDrawPainter extends CustomPainter {
 
 class _StarField extends StatefulWidget {
   final double speed;
-  final double starSpeed;
-  final double starScale;
-  const _StarField(
-      {this.speed = 0.04, this.starSpeed = 1.0, this.starScale = 1.0});
+  const _StarField({this.speed = 0.04});
 
   @override
   State<_StarField> createState() => _StarFieldState();
@@ -3981,9 +3902,7 @@ class _StarFieldState extends State<_StarField>
   Widget build(BuildContext context) {
     return RepaintBoundary(
       child: CustomPaint(
-        painter: _StarryPainter(
-            () => _elapsed, _tick, widget.speed, widget.starSpeed,
-            widget.starScale),
+        painter: _StarryPainter(() => _elapsed, _tick, widget.speed),
         size: Size.infinite,
       ),
     );
@@ -3991,14 +3910,11 @@ class _StarFieldState extends State<_StarField>
 }
 
 class _StarryPainter extends CustomPainter {
-  _StarryPainter(this.clock, Listenable tick, this.speed, this.starSpeed,
-      this.starScale)
+  _StarryPainter(this.clock, Listenable tick, this.speed)
       : super(repaint: tick);
 
   final Duration Function() clock;
   final double speed;
-  final double starSpeed;
-  final double starScale;
 
   static final List<Map<String, dynamic>> _clouds = () {
     final r = math.Random(23);
@@ -4097,12 +4013,8 @@ class _StarryPainter extends CustomPainter {
       }
     }
 
-    final frames = el.inMicroseconds / 16666.7 * starSpeed;
-    final core = Paint()..style = PaintingStyle.fill;
-    final halo = Paint()..style = PaintingStyle.fill;
-    final spark = Paint()
-      ..strokeWidth = 0.8
-      ..strokeCap = StrokeCap.round;
+    final frames = el.inMicroseconds / 16666.7;
+    final starPaint = Paint()..style = PaintingStyle.fill;
     for (var i = 0; i < _stars.length; i++) {
       final s = _stars[i];
       final maxLife = s[3];
@@ -4110,27 +4022,12 @@ class _StarryPainter extends CustomPainter {
       final k = (cycle / maxLife).floorToDouble();
       final opacity = math.sin((cycle % maxLife) / maxLife * math.pi);
       if (opacity <= 0.02) continue;
-      final center = Offset(_hash(i.toDouble(), k) * size.width,
-          _hash(i.toDouble() + 0.5, k) * size.height);
-      final rr = (s[2] * starScale).clamp(0.4, 6.0);
-      halo.color = Colors.white.withOpacity(opacity * 0.12);
-      canvas.drawCircle(center, rr * 2.6, halo);
-      halo.color = Colors.white.withOpacity(opacity * 0.22);
-      canvas.drawCircle(center, rr * 1.5, halo);
-      core.color = Colors.white.withOpacity(opacity);
-      canvas.drawCircle(center, rr * 0.75, core);
-      if (rr >= 1.1) {
-        spark.color = Colors.white.withOpacity(opacity * 0.45);
-        final arm = rr * 3.2;
-        canvas.drawLine(
-            Offset(center.dx - arm, center.dy),
-            Offset(center.dx + arm, center.dy),
-            spark);
-        canvas.drawLine(
-            Offset(center.dx, center.dy - arm),
-            Offset(center.dx, center.dy + arm),
-            spark);
-      }
+      starPaint.color = Colors.white.withOpacity(opacity);
+      canvas.drawCircle(
+          Offset(_hash(i.toDouble(), k) * size.width,
+              _hash(i.toDouble() + 0.5, k) * size.height),
+          s[2],
+          starPaint);
     }
   }
 
