@@ -99,6 +99,7 @@ class _AppRootState extends State<AppRoot> {
   bool _testing = false;
   String _testResult = "";
   String _engineLog = "";
+  String _appVersion = "2.0.0";
   bool _showKey = false;
   double _textScale = 1.0;
   double _cloudSpeed = 0.04;
@@ -213,6 +214,10 @@ class _AppRootState extends State<AppRoot> {
       _appDir = (await _ch.invokeMethod<String>('filesDirPath')) ?? "";
       await _loadSettings();
       await _loadSessions();
+      try {
+        final v = await _ch.invokeMethod<String>('appVersion');
+        if (v != null && v.isNotEmpty) _appVersion = v;
+      } catch (_) {}
       if (_apiKey.isNotEmpty) unawaited(_fetchBalance());
       if (_apiKey.isEmpty) {
         setState(() {
@@ -1893,10 +1898,10 @@ class _AppRootState extends State<AppRoot> {
                                 dense: true,
                                 leading: Icon(Icons.info_outline,
                                     size: 20, color: Colors.white38),
-                                title: Text("落锤 v2.0.0",
+                                title: Text("落锤 v$_appVersion",
                                     style: TextStyle(
                                         color: Colors.white38, fontSize: 13)),
-                                subtitle: Text("本地 DSH 引擎 · 原生界面 · 构建 236",
+                                subtitle: Text("本地 DSH 引擎 · 原生界面",
                                     style: TextStyle(
                                         color: Colors.white24, fontSize: 11)),
                               ),

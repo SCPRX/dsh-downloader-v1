@@ -129,6 +129,18 @@ class MainActivity : FlutterActivity() {
                         result.success(false)
                     }
                 }
+                "appVersion" -> {
+                    try {
+                        val pm = packageManager
+                        val info = if (android.os.Build.VERSION.SDK_INT >= 33)
+                            pm.getPackageInfo(packageName, android.content.pm.PackageManager.PackageInfoFlags.of(0))
+                        else
+                            pm.getPackageInfo(packageName, 0)
+                        result.success(info.versionName ?: "")
+                    } catch (t: Throwable) {
+                        result.success("")
+                    }
+                }
                 "openBatterySettings" -> {
                     try {
                         var done = false
