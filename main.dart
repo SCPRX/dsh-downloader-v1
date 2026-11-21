@@ -57,7 +57,8 @@ class ChatMsg {
   final bool mine;
   final int kind;
   final int ts;
-  ChatMsg(this.text, this.mine, {this.kind = 0, int? ts})
+  final String? imagePath;
+  ChatMsg(this.text, this.mine, {this.kind = 0, int? ts, this.imagePath})
       : ts = ts ?? DateTime.now().millisecondsSinceEpoch;
 }
 
@@ -137,6 +138,7 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
   bool _termBusy = false;
   String _pendingImageB64 = "";
   String _pendingImageMime = "";
+  String _pendingImagePath = "";
   String _reasoning = "auto";
   String _workDir = "/root";
   String _queuedText = "";
@@ -418,7 +420,10 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
                 if (m is Map) {
                   msgs.add(ChatMsg((m['t'] ?? "").toString(), m['m'] == true,
                       kind: (m['k'] as num?)?.toInt() ?? 0,
-                      ts: (m['ts'] as num?)?.toInt()));
+                      ts: (m['ts'] as num?)?.toInt(),
+                      imagePath: (m['img'] ?? "") == ""
+                          ? null
+                          : m['img'].toString()));
                 }
               }
             }
@@ -440,7 +445,10 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
             if (m is Map) {
               msgs.add(ChatMsg((m['t'] ?? "").toString(), m['m'] == true,
                       kind: (m['k'] as num?)?.toInt() ?? 0,
-                      ts: (m['ts'] as num?)?.toInt()));
+                      ts: (m['ts'] as num?)?.toInt(),
+                      imagePath: (m['img'] ?? "") == ""
+                          ? null
+                          : m['img'].toString()));
             }
           }
           _sessions.add(ChatSession(_newId(), "历史对话", msgs));
@@ -481,7 +489,13 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
             'a': s.archived,
             'msgs': [
               for (final m in s.msgs)
-                {'t': m.text, 'm': m.mine, 'k': m.kind, 'ts': m.ts}
+                {
+                  't': m.text,
+                  'm': m.mine,
+                  'k': m.kind,
+                  'ts': m.ts,
+                  'img': m.imagePath ?? "",
+                }
             ],
           }
       ];
@@ -1276,8 +1290,20 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
     final shown = text.isEmpty ? "[图片]" : text;
     final imageB64 = _pendingImageB64;
     final imageMime = _pendingImageMime;
+    final pendingPath = _pendingImagePath;
+    String? savedImage;
+    if (pendingPath.isNotEmpty) {
+      try {
+        final dir = Directory("$_appDir/images");
+        if (!await dir.exists()) await dir.create(recursive: true);
+        final ext = pendingPath.split('.').last.toLowerCase();
+        final dst = File("${dir.path}/img_${DateTime.now().millisecondsSinceEpoch}.$ext");
+        await File(pendingPath).copy(dst.path);
+        savedImage = dst.path;
+      } catch (_) {}
+    }
     setState(() {
-      _msgs.add(ChatMsg(shown, true));
+      _msgs.add(ChatMsg(shown, true, imagePath: savedImage));
       for (final s in _sessions) {
         if (s.id == _sessionKey && s.title == "新对话") {
           s.title = shown.length > 12 ? shown.substring(0, 12) : shown;
@@ -1285,6 +1311,7 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
       }
       _pendingImageB64 = "";
       _pendingImageMime = "";
+      _pendingImagePath = "";
       _sending = true;
       _streamText = "";
       _chunkSeen = false;
@@ -2262,6 +2289,76 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
     } catch (_) {}
   }
 
+  void _showImage(String path) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.black,
+        insetPadding: const EdgeInsets.all(8),
+        child: Stack(
+          children: [
+            InteractiveViewer(
+              minScale: 1,
+              maxScale: 5,
+              child: Image.file(File(path), fit: BoxFit.contain),
+            ),
+            Positioned(
+              right: 8,
+              top: 8,
+              child: IconButton(
+                onPressed: () => Navigator.pop(ctx),
+                icon: const Icon(Icons.close, color: Colors.white),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showPrompts() {
+    const prompts = [
+      "帮我总结下面这段话",
+      "把这段代码优化一下",
+      "用简单的话解释这个概念",
+      "列出解决这个问题的步骤",
+      "帮我写一份清单",
+      "检查这段话有没有错误",
+    ];
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF0D1620),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.all(14),
+              child: Text("常用提示",
+                  style: TextStyle(color: Colors.white70, fontSize: 13)),
+            ),
+            for (final p in prompts)
+              ListTile(
+                dense: true,
+                title: Text(p,
+                    style: const TextStyle(color: Colors.white, fontSize: 14)),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  setState(() {
+                    _inputCtrl.text = p;
+                    _inputCtrl.selection = TextSelection.fromPosition(
+                        TextPosition(offset: _inputCtrl.text.length));
+                    _inputExpanded = true;
+                  });
+                  _inputFocus.requestFocus();
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _attachImage() async {
     try {
       final path = await _ch.invokeMethod<String>('pickImage');
@@ -2282,6 +2379,7 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
       setState(() {
         _pendingImageB64 = base64Encode(bytes);
         _pendingImageMime = mime;
+        _pendingImagePath = path;
       });
     } catch (e) {
       ScaffoldMessenger.maybeOf(context)?.showSnackBar(
@@ -3449,6 +3547,17 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
             ),
             ListTile(
               dense: true,
+              leading: const Icon(Icons.bolt_outlined,
+                  size: 20, color: Colors.white54),
+              title: const Text("常用提示",
+                  style: TextStyle(color: Colors.white, fontSize: 14)),
+              onTap: () {
+                Navigator.pop(context);
+                _showPrompts();
+              },
+            ),
+            ListTile(
+              dense: true,
               leading: const Icon(Icons.settings_outlined,
                   size: 20, color: Colors.white54),
               title: const Text("设置",
@@ -3825,6 +3934,25 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
                             : CrossAxisAlignment.start,
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          if (!isStream &&
+                              _msgs[i].imagePath != null &&
+                              File(_msgs[i].imagePath!).existsSync())
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 6),
+                              child: GestureDetector(
+                                onTap: () =>
+                                    _showImage(_msgs[i].imagePath!),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(12),
+                                  child: Image.file(
+                                    File(_msgs[i].imagePath!),
+                                    width: 180,
+                                    height: 180,
+                                    fit: BoxFit.cover,
+                                  ),
+                                ),
+                              ),
+                            ),
                           if (!isStream && _msgs[i].kind == 3)
                             _ThinkingBlock(text: text, streaming: false)
                           else
