@@ -120,7 +120,6 @@ class MainActivity : FlutterActivity() {
                     }
                 }
                 "readEngineLog" -> result.success(readEngineLog())
-                "hasBundledEnv" -> result.success(hasBundledEnv())
                 "speak" -> {
                     val text = call.argument<String>("text") ?: ""
                     try {
@@ -307,12 +306,7 @@ class MainActivity : FlutterActivity() {
                 "installPayload" -> {
                     installPayloadAsync()
                     result.success(true)
-                }
-                "installBundledEnv" -> {
-                    installBundledEnv()
-                    result.success(true)
-                }
-                "startSdk" -> {
+                }                "startSdk" -> {
                     val apiKey = call.argument<String>("apiKey") ?: ""
                     startSdk(apiKey)
                     result.success(true)
@@ -676,32 +670,7 @@ class MainActivity : FlutterActivity() {
                 logEngine("[patch] skip " + destRel + ": " + t.message)
             }
         }
-    }
-
-    private fun applyPatchesFromAssets() {
-        val pats = listOf(
-            "patches/dsh-session-persistence-jsonl__index.js" to
-                "rootfs/opt/dsh/node_modules/@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js",
-            "patches/dsh-attachment-local__index.js" to
-                "rootfs/opt/dsh/node_modules/@deepseek-ai/dsh-attachment-local/lib/index.js"
-        )
-        for ((asset, destRel) in pats) {
-            try {
-                val dest = File(envDir, destRel)
-                if (!dest.exists()) continue
-                assets.open(asset).use { input ->
-                    dest.outputStream().use { output ->
-                        input.copyTo(output, 256 * 1024)
-                    }
-                }
-                logEngine("[patch] " + destRel)
-            } catch (t: Throwable) {
-                logEngine("[patch] skip " + destRel + ": " + t.message)
-            }
-        }
-    }
-
-    private fun runShell(cmd: String): String {
+    }    private fun runShell(cmd: String): String {
         if (!isEnvReady()) return "环境还没装好"
         return try {
             val safe = cmd.replace("'", "'\\''")
@@ -748,40 +717,9 @@ class MainActivity : FlutterActivity() {
         } catch (t: Throwable) {
             "执行失败: " + t.message
         }
-    }
-
-    private fun hasBundledEnv(): Boolean = try {
-        assets.open("runtime.zip").use { true }
     } catch (_: Throwable) {
         false
-    }
-
-    private fun installBundledEnv() {
-        Thread {
-            try {
-                val zip = File(cacheDir, "env_data.zip")
-                status("正在安装内置环境…")
-                assets.open("runtime.zip").use { input ->
-                    FileOutputStream(zip).use { out ->
-                        val buf = ByteArray(256 * 1024)
-                        var n = input.read(buf)
-                        var total = 0L
-                        while (n > 0) {
-                            out.write(buf, 0, n)
-                            total += n
-                            n = input.read(buf)
-                        }
-                        logEngine("[bundle] copied " + total + " bytes")
-                    }
-                }
-                extractEnv(zip)
-            } catch (t: Throwable) {
-                fail("内置环境安装失败: " + t.message)
-            }
-        }.start()
-    }
-
-    private fun extractEnv(zipFile: File) {
+    }    private fun extractEnv(zipFile: File) {
         Thread {
             try {
                 if (!zipFile.exists()) {
