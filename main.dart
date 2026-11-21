@@ -3916,16 +3916,26 @@ class _StarryPainter extends CustomPainter {
   final Duration Function() clock;
   final double speed;
 
-  static final List<List<double>> _clouds = () {
+  static final List<Map<String, dynamic>> _clouds = () {
     final r = math.Random(23);
     return List.generate(6, (i) {
-      return [
-        0.05 + r.nextDouble() * 0.9,
-        0.08 + r.nextDouble() * 0.84,
-        0.18 + r.nextDouble() * 0.2,
-        0.16 + r.nextDouble() * 0.14,
-        (r.nextBool() ? 1 : -1) * (0.06 + r.nextDouble() * 0.07),
-      ];
+      final baseR = 0.17 + r.nextDouble() * 0.18;
+      final blobs = List.generate(5, (j) {
+        return [
+          (r.nextDouble() * 2 - 1) * baseR * 1.5,
+          (r.nextDouble() * 2 - 1) * baseR * 0.55,
+          baseR * (0.35 + r.nextDouble() * 0.6),
+          0.55 + r.nextDouble() * 0.45,
+        ];
+      });
+      return {
+        'x': 0.05 + r.nextDouble() * 0.9,
+        'y': 0.06 + r.nextDouble() * 0.86,
+        'r': baseR,
+        'op': 0.10 + r.nextDouble() * 0.10,
+        'dir': r.nextBool() ? 1.0 : -1.0,
+        'blobs': blobs,
+      };
     });
   }();
 
@@ -3947,13 +3957,16 @@ class _StarryPainter extends CustomPainter {
     return s - s.floorToDouble();
   }
 
-  void _cloud(Canvas canvas, double cx, double cy, double radius,
+  void _blob(Canvas canvas, double cx, double cy, double radius,
       double opacity) {
+    if (opacity <= 0.002 || radius <= 0.5) return;
     final rect = Rect.fromCircle(center: Offset(cx, cy), radius: radius);
     final paint = Paint()
       ..shader = RadialGradient(
+        stops: const [0.0, 0.45, 1.0],
         colors: [
           Colors.white.withOpacity(opacity),
+          Colors.white.withOpacity(opacity * 0.55),
           Colors.white.withOpacity(0.0),
         ],
       ).createShader(rect);
@@ -3975,18 +3988,29 @@ class _StarryPainter extends CustomPainter {
     final seconds = el.inMicroseconds / 1000000.0;
 
     for (final c in _clouds) {
-      final x = ((c[0] + (c[4] < 0 ? -speed : speed) * seconds) % 1.3) - 0.15;
+      final dir = c['dir'] as double;
+      var x = ((c['x'] as double) + dir * speed * seconds) % 1.3;
+      if (x < 0) x += 1.3;
+      x -= 0.15;
       final cx = x * size.width;
-      final cy = c[1] * size.height;
-      final baseRadius = c[2] * size.width;
-      final op = c[3];
-      _cloud(canvas, cx, cy, baseRadius, op);
-      _cloud(canvas, cx - baseRadius * 0.6, cy + baseRadius * 0.1,
-          baseRadius * 0.7, op);
-      _cloud(canvas, cx + baseRadius * 0.7, cy - baseRadius * 0.1,
-          baseRadius * 0.8, op);
-      _cloud(canvas, cx + baseRadius * 0.2, cy - baseRadius * 0.5,
-          baseRadius * 0.6, op);
+      final cy = (c['y'] as double) * size.height;
+      final baseR = (c['r'] as double) * size.width;
+      var op = c['op'] as double;
+      if (x < 0.12) {
+        op *= ((x + 0.15) / 0.27).clamp(0.0, 1.0);
+      }
+      if (x > 0.88) {
+        op *= ((1.15 - x) / 0.27).clamp(0.0, 1.0);
+      }
+      if (op <= 0.002) continue;
+      final blobs = c['blobs'] as List;
+      for (final b in blobs) {
+        final dx = (b[0] as double) * size.width;
+        final dy = (b[1] as double) * size.width;
+        final rr = (b[2] as double) * size.width;
+        final k = b[3] as double;
+        _blob(canvas, cx + dx, cy + dy, rr, op * k);
+      }
     }
 
     final frames = el.inMicroseconds / 16666.7;
