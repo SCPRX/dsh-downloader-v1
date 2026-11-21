@@ -1876,7 +1876,7 @@ class _AppRootState extends State<AppRoot> {
                                 dense: true,
                                 leading: Icon(Icons.info_outline,
                                     size: 20, color: Colors.white38),
-                                title: Text("落锤 1.2.0",
+                                title: Text("落锤 v236",
                                     style: TextStyle(
                                         color: Colors.white38, fontSize: 13)),
                                 subtitle: Text("本地 DSH 引擎 · 原生界面",
