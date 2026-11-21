@@ -3332,9 +3332,8 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
       ),
     );
     String msg = "";
+    String latestTag = "";
     try {
-      final installTime =
-          await _ch.invokeMethod<int>('appInstallTime') ?? 0;
       final resp = await http.get(
         Uri.parse(
             "https://api.github.com/repos/SCPRX/dsh-downloader-v1/commits/main"),
@@ -3342,25 +3341,39 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
       ).timeout(const Duration(seconds: 15));
       if (resp.statusCode == 200) {
         final m = jsonDecode(resp.body);
-        final dateStr = (m is Map && m['commit'] is Map)
-            ? (m['commit']['committer']?['date'] ?? "").toString()
-            : "";
         final msgText = (m is Map && m['commit'] is Map)
             ? (m['commit']['message'] ?? "").toString()
             : "";
-        final latest =
-            DateTime.tryParse(dateStr)?.millisecondsSinceEpoch ?? 0;
-        if (latest > installTime) {
-          msg = "发现新版本（构建于 ${dateStr.replaceFirst('T', ' ').split('.').first} UTC）"
-              "\n最新改动：${msgText.split('\n').first}";
-        } else {
-          msg = "已是最新版本";
-        }
-      } else {
-        msg = "检查失败：HTTP ${resp.statusCode}";
+        msg = "最新改动：${msgText.split('\n').first}";
       }
-    } catch (e) {
-      msg = "检查失败，请检查网络";
+    } catch (_) {}
+    if (msg.isEmpty) {
+      try {
+        final page = await http.get(
+          Uri.parse(
+              "https://github.com/SCPRX/dsh-downloader-v1/releases"),
+        ).timeout(const Duration(seconds: 20));
+        if (page.statusCode == 200) {
+          final m = RegExp(r'/releases/tag/(v[0-9]+\.[0-9]+\.[0-9]+)')
+              .firstMatch(page.body);
+          latestTag = m?.group(1) ?? "";
+          if (latestTag.isNotEmpty) {
+            msg = "最新版本：$latestTag";
+          }
+        }
+      } catch (_) {}
+    }
+    if (msg.isEmpty) {
+      msg = "检查失败（网络或 GitHub 限流），可直接点「去下载」看 Releases";
+    } else {
+      final cur = _appVersion;
+      if (latestTag.isNotEmpty && latestTag != "v$cur") {
+        msg = "$msg\n当前版本：v$cur（可更新）";
+      } else if (latestTag.isNotEmpty) {
+        msg = "$msg\n当前版本：v$cur（已是最新）";
+      } else {
+        msg = "$msg\n当前版本：v$cur";
+      }
     }
     if (!mounted) return;
     Navigator.of(context).pop();
