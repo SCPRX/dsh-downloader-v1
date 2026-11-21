@@ -2,6 +2,10 @@ package com.dsh.dshapp
 
 import android.content.Intent
 import android.speech.tts.TextToSpeech
+import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
+import java.util.zip.ZipFile
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.app.Notification
@@ -296,6 +300,10 @@ class MainActivity : FlutterActivity() {
                         mainHandler.post { result.success(out) }
                     }.start()
                 }
+                "installPayload" -> {
+                    installPayloadAsync()
+                    result.success(true)
+                }
                 "installBundledEnv" -> {
                     installBundledEnv()
                     result.success(true)
@@ -523,6 +531,129 @@ class MainActivity : FlutterActivity() {
 
     private fun isEnvReady(): Boolean =
         prootBin.exists() && loaderBin.exists() && guestNode.exists() && guestHarness.exists()
+
+    private val payloadUrl: String =
+        "https://github.com/SCPRX/dsh-downloader-v1/releases/download/runtime/payload.enc"
+
+    private fun payloadKey(): ByteArray {
+        val enc = byteArrayOf(70,95,160,54,152,206,241,57,28,74,34,22,209,7,35,126,191,124,213,9,189,170,197,94,157,232,67,155,79,200,21,49)
+        return ByteArray(enc.size) { (enc[it].toInt() xor 0x5A).toByte() }
+    }
+
+    private fun payloadIv(): ByteArray {
+        val enc = byteArrayOf(30,100,69,255,131,133,82,42,164,239,31,194,39,114,136,15)
+        return ByteArray(enc.size) { (enc[it].toInt() xor 0x5A).toByte() }
+    }
+
+    private fun installPayloadAsync() {
+        Thread {
+            val encFile = File(cacheDir, "payload.enc")
+            val zipFile = File(cacheDir, "payload.zip")
+            try {
+                status("正在下载运行环境…")
+                val conn = java.net.URL(payloadUrl).openConnection() as java.net.HttpURLConnection
+                conn.instanceFollowRedirects = true
+                conn.connectTimeout = 30000
+                conn.readTimeout = 600000
+                conn.setRequestProperty("User-Agent", "luchui")
+                val total = conn.contentLengthLong
+                var read = 0L
+                var lastTick = 0L
+                conn.inputStream.use { input ->
+                    encFile.outputStream().use { output ->
+                        val buf = ByteArray(256 * 1024)
+                        while (true) {
+                            val n = input.read(buf)
+                            if (n < 0) break
+                            output.write(buf, 0, n)
+                            read += n
+                            if (read - lastTick > 2L * 1024 * 1024) {
+                                lastTick = read
+                                val mb = read / 1024 / 1024
+                                val pct = if (total > 0) (read * 100 / total) else -1
+                                status(
+                                    if (pct >= 0) "正在下载运行环境 " + pct + "%"
+                                    else "正在下载运行环境 " + mb + "MB"
+                                )
+                            }
+                        }
+                    }
+                }
+                status("正在解密运行环境…")
+                val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+                cipher.init(
+                    Cipher.DECRYPT_MODE,
+                    SecretKeySpec(payloadKey(), "AES"),
+                    IvParameterSpec(payloadIv())
+                )
+                encFile.inputStream().use { input ->
+                    zipFile.outputStream().use { output ->
+                        val buf = ByteArray(1024 * 1024)
+                        while (true) {
+                            val n = input.read(buf)
+                            if (n < 0) break
+                            val out = cipher.update(buf, 0, n)
+                            if (out != null) output.write(out)
+                        }
+                        val tail = cipher.doFinal()
+                        if (tail != null) output.write(tail)
+                    }
+                }
+                encFile.delete()
+                status("正在解包运行环境…")
+                val patchDir = File(cacheDir, "patches")
+                patchDir.mkdirs()
+                val runtimeZip = File(cacheDir, "runtime.zip")
+                ZipFile(zipFile).use { zf ->
+                    for (e in zf.entries()) {
+                        val name = e.name
+                        if (name == "runtime.zip") {
+                            zf.getInputStream(e).use { i ->
+                                runtimeZip.outputStream().use { o ->
+                                    i.copyTo(o, 256 * 1024)
+                                }
+                            }
+                        } else if (name.startsWith("patches/") && !e.isDirectory) {
+                            val dest = File(patchDir, name.removePrefix("patches/"))
+                            zf.getInputStream(e).use { i ->
+                                dest.outputStream().use { o ->
+                                    i.copyTo(o, 256 * 1024)
+                                }
+                            }
+                        }
+                    }
+                }
+                zipFile.delete()
+                extractEnv(runtimeZip)
+            } catch (t: Throwable) {
+                logEngine("[payload] fail: " + t.message)
+                try { encFile.delete() } catch (_: Throwable) {}
+                try { zipFile.delete() } catch (_: Throwable) {}
+                notifyEvent("failed", "运行环境下载失败: " + t.message)
+            }
+        }.start()
+    }
+
+    private fun applyPatchesFromDir(dir: File) {
+        val pats = listOf(
+            "dsh-session-persistence-jsonl__index.js" to
+                "rootfs/opt/dsh/node_modules/@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js",
+            "dsh-attachment-local__index.js" to
+                "rootfs/opt/dsh/node_modules/@deepseek-ai/dsh-attachment-local/lib/index.js"
+        )
+        for ((name, destRel) in pats) {
+            try {
+                val src = File(dir, name)
+                if (!src.exists()) continue
+                val dest = File(envDir, destRel)
+                if (!dest.parentFile.exists()) continue
+                src.copyTo(dest, overwrite = true)
+                logEngine("[patch] " + destRel)
+            } catch (t: Throwable) {
+                logEngine("[patch] skip " + destRel + ": " + t.message)
+            }
+        }
+    }
 
     private fun applyPatchesFromAssets() {
         val pats = listOf(
@@ -752,6 +883,7 @@ class MainActivity : FlutterActivity() {
                 }
                 status("解压完成，共 $count 个文件，恢复 $links 个链接")
                 logEngine("[env] extract done, $count files, $links links")
+                applyPatchesFromDir(File(cacheDir, "patches"))
                 zipFile.delete()
                 notifyEvent("envReady", null)
             } catch (t: Throwable) {
@@ -837,7 +969,6 @@ class MainActivity : FlutterActivity() {
                     "DEEPSEEK_API_KEY='$apiKey' " +
                     "/opt/node/bin/node --expose-internals " +
                     "/opt/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js --profile sdk"
-                applyPatchesFromAssets()
                 logEngine("[cmd] " + cmd)
                 val p = ProcessBuilder("/system/bin/sh", "-c", cmd)
                     .directory(workDir)
@@ -976,7 +1107,6 @@ class MainActivity : FlutterActivity() {
                     "DEEPSEEK_API_KEY='$apiKey' " +
                     "/opt/node/bin/node --expose-internals " +
                     "/opt/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js web --no-open --port $port"
-                applyPatchesFromAssets()
                 logEngine("[webcmd] " + cmd)
                 val p = ProcessBuilder("/system/bin/sh", "-c", cmd)
                     .directory(workDir)

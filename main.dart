@@ -243,14 +243,10 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
         unawaited(_startEngine());
         return;
       }
-      final bool bundled = await _ch.invokeMethod<bool>('hasBundledEnv') ?? false;
-      if (bundled) {
-        setState(() => _status = "正在安装内置环境…");
-        _startKeepAliveLoop(text: "正在安装内置环境，请勿清理后台…");
-        await _ch.invokeMethod('installBundledEnv');
-        return;
-      }
-      await _downloadEnv();
+      setState(() => _status = "正在下载运行环境…");
+      _startKeepAliveLoop(text: "正在下载运行环境，请保持联网…");
+      await _ch.invokeMethod('installPayload');
+      return;
     } catch (e) {
       _downloading = false;
       _stopKeepAliveLoop();

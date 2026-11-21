@@ -80,23 +80,6 @@ flutter {
     source = "../.."
 }
 
-
-// 运行时由 CI 从私有仓库拉取后放到 assets，本任务只做校验
-val bundleRuntime = tasks.register("bundleRuntime") {
-    val out = File(projectDir, "src/main/assets/runtime.zip")
-    inputs.property("runtimePath", out.absolutePath)
-    doLast {
-        if (out.exists() && out.length() > 100_000_000L) {
-            println("runtime bundled: " + out.length())
-            return@doLast
-        }
-        throw GradleException(
-            "缺少 runtime.zip：CI 会从私有仓库拉取到 android/app/src/main/assets/runtime.zip"
-        )
-    }
-}
-tasks.named("preBuild") { dependsOn(bundleRuntime) }
-
 android {
     lint {
         abortOnError = false
