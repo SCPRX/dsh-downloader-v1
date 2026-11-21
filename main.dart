@@ -57,9 +57,11 @@ class ChatMsg {
   final bool mine;
   final int kind;
   final int ts;
-  final String? imagePath;
-  ChatMsg(this.text, this.mine, {this.kind = 0, int? ts, this.imagePath})
-      : ts = ts ?? DateTime.now().millisecondsSinceEpoch;
+  final List<String> images;
+  ChatMsg(this.text, this.mine,
+      {this.kind = 0, int? ts, List<String>? images})
+      : images = images ?? const [],
+        ts = ts ?? DateTime.now().millisecondsSinceEpoch;
 }
 
 class AppRoot extends StatefulWidget {
@@ -110,6 +112,7 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
   String _thinkingText = "";
   final FocusNode _inputFocus = FocusNode();
   String _lastSessionId = "";
+  String _remoteUrl = "";
   String _balance = "";
   bool _balanceLoading = false;
   String _nativeFailMsg = "";
@@ -139,6 +142,7 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
   String _pendingImageB64 = "";
   String _pendingImageMime = "";
   String _pendingImagePath = "";
+  final List<Map<String, String>> _pendingImages = [];
   String _reasoning = "auto";
   String _workDir = "/root";
   String _queuedText = "";
@@ -374,6 +378,7 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
           _cloudSpeed = (m['cloudSpeed'] as num?)?.toDouble() ?? 0.04;
           _enterSends = (m['enterSends'] as bool?) ?? true;
           _lastSessionId = (m['sessionKey'] ?? "").toString();
+          _remoteUrl = (m['remoteUrl'] ?? "").toString();
           _reasoning = (m['reasoning'] ?? "auto").toString();
           _workDir = (m['workDir'] ?? "/root").toString();
         }
@@ -392,6 +397,7 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
         'cloudSpeed': _cloudSpeed,
         'enterSends': _enterSends,
         'sessionKey': _sessionKey,
+        'remoteUrl': _remoteUrl,
         'reasoning': _reasoning,
         'workDir': _workDir,
       }));
@@ -421,9 +427,11 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
                   msgs.add(ChatMsg((m['t'] ?? "").toString(), m['m'] == true,
                       kind: (m['k'] as num?)?.toInt() ?? 0,
                       ts: (m['ts'] as num?)?.toInt(),
-                      imagePath: (m['img'] ?? "") == ""
-                          ? null
-                          : m['img'].toString()));
+                      images: (m['imgs'] is List)
+                          ? [for (final x in (m['imgs'] as List)) x.toString()]
+                          : (((m['img'] ?? "") == "")
+                              ? null
+                              : [m['img'].toString()])));
                 }
               }
             }
@@ -494,7 +502,8 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
                   'm': m.mine,
                   'k': m.kind,
                   'ts': m.ts,
-                  'img': m.imagePath ?? "",
+                  'img': "",
+                  'imgs': m.images,
                 }
             ],
           }
@@ -943,6 +952,10 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
     final tool = (params['toolName'] ?? params['tool'] ?? "工具").toString();
     final reason = (params['reason'] ?? "").toString();
     bool allow = false;
+    if (!_appActive) {
+      unawaited(_ch.invokeMethod(
+          'notifyDone', {'text': "需要你审批工具：$tool"}));
+    }
     if (!mounted) return;
     await showDialog<void>(
       context: context,
@@ -1258,7 +1271,7 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
 
   Future<void> _send() async {
     final text = _inputCtrl.text.trim();
-    final hasImage = _pendingImageB64.isNotEmpty;
+    final hasImage = _hasPendingImage;
     if (text.isEmpty && !hasImage) return;
     if (_sending && !hasImage) {
       _inputCtrl.clear();
@@ -1288,22 +1301,14 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
     }
     _inputCtrl.clear();
     final shown = text.isEmpty ? "[图片]" : text;
-    final imageB64 = _pendingImageB64;
-    final imageMime = _pendingImageMime;
-    final pendingPath = _pendingImagePath;
-    String? savedImage;
-    if (pendingPath.isNotEmpty) {
-      try {
-        final dir = Directory("$_appDir/images");
-        if (!await dir.exists()) await dir.create(recursive: true);
-        final ext = pendingPath.split('.').last.toLowerCase();
-        final dst = File("${dir.path}/img_${DateTime.now().millisecondsSinceEpoch}.$ext");
-        await File(pendingPath).copy(dst.path);
-        savedImage = dst.path;
-      } catch (_) {}
-    }
+    final pending = List<Map<String, String>>.from(_pendingImages);
+    await _saveImagesToAppDir();
+    final savedImages = <String>[
+      for (final item in pending)
+        if ((item['saved'] ?? "").isNotEmpty) item['saved']!,
+    ];
     setState(() {
-      _msgs.add(ChatMsg(shown, true, imagePath: savedImage));
+      _msgs.add(ChatMsg(shown, true, images: savedImages));
       for (final s in _sessions) {
         if (s.id == _sessionKey && s.title == "新对话") {
           s.title = shown.length > 12 ? shown.substring(0, 12) : shown;
@@ -1312,6 +1317,7 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
       _pendingImageB64 = "";
       _pendingImageMime = "";
       _pendingImagePath = "";
+      _pendingImages.clear();
       _sending = true;
       _streamText = "";
       _chunkSeen = false;
@@ -1331,9 +1337,13 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
     try {
       final blocks = <Map<String, dynamic>>[];
       if (text.isNotEmpty) blocks.add({'type': 'text', 'text': text});
-      if (imageB64.isNotEmpty)
-        blocks.add(
-            {'type': 'image', 'data': imageB64, 'mimeType': imageMime});
+      for (final item in pending) {
+        blocks.add({
+          'type': 'image',
+          'data': item['b64'] ?? '',
+          'mimeType': item['mime'] ?? 'image/jpeg',
+        });
+      }
       await _rpc('session/query', {
         'sessionId': _sessionId,
         'contentBlocks': blocks,
@@ -2316,6 +2326,53 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
     );
   }
 
+  void _showRemoteHost() {
+    final ctrl = TextEditingController(text: _remoteUrl);
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF0B1220),
+        title: const Text("连接远程 DSH",
+            style: TextStyle(color: Colors.white, fontSize: 15)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text("填电脑/服务器上 DSH 网页版的地址，例如 http://192.168.1.10:3080",
+                style: TextStyle(color: Colors.white54, fontSize: 12, height: 1.4)),
+            const SizedBox(height: 10),
+            TextField(
+              controller: ctrl,
+              style: const TextStyle(color: Colors.white, fontSize: 14),
+              decoration: const InputDecoration(
+                hintText: "http://...",
+                hintStyle: TextStyle(color: Colors.white30),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("取消", style: TextStyle(color: Colors.white54)),
+          ),
+          TextButton(
+            onPressed: () {
+              final url = ctrl.text.trim();
+              Navigator.pop(ctx);
+              if (url.isEmpty) return;
+              setState(() => _remoteUrl = url);
+              unawaited(_saveSettings());
+              _openWeb(url);
+            },
+            child: const Text("连接",
+                style: TextStyle(color: Color(0xFF00FFCC))),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showPrompts() {
     const prompts = [
       "帮我总结下面这段话",
@@ -2361,32 +2418,53 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
 
   Future<void> _attachImage() async {
     try {
-      final path = await _ch.invokeMethod<String>('pickImage');
-      if (path == null || path.isEmpty) return;
-      final f = File(path);
-      if (!await f.exists()) return;
-      final bytes = await f.readAsBytes();
-      if (bytes.length > 8 * 1024 * 1024) {
-        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-          const SnackBar(content: Text("图片太大（超过 8MB）")),
-        );
-        return;
+      final paths = await _ch.invokeMethod<List<dynamic>>('pickImages');
+      if (paths == null || paths.isEmpty) return;
+      for (final p0 in paths) {
+        if (_pendingImages.length >= 9) break;
+        final p = p0.toString();
+        final f = File(p);
+        if (!await f.exists()) continue;
+        final bytes = await f.readAsBytes();
+        if (bytes.length > 8 * 1024 * 1024) continue;
+        final ext = p.split('.').last.toLowerCase();
+        final mime = ext == 'png'
+            ? 'image/png'
+            : (ext == 'webp' ? 'image/webp' : 'image/jpeg');
+        setState(() {
+          _pendingImages.add({
+            'b64': base64Encode(bytes),
+            'mime': mime,
+            'path': p,
+          });
+        });
       }
-      final ext = path.split('.').last.toLowerCase();
-      final mime = ext == 'png'
-          ? 'image/png'
-          : (ext == 'webp' ? 'image/webp' : 'image/jpeg');
-      setState(() {
-        _pendingImageB64 = base64Encode(bytes);
-        _pendingImageMime = mime;
-        _pendingImagePath = path;
-      });
     } catch (e) {
       ScaffoldMessenger.maybeOf(context)?.showSnackBar(
         SnackBar(content: Text("选图失败: $e")),
       );
     }
   }
+
+  Future<void> _saveImagesToAppDir() async {
+    if (_pendingImages.isEmpty) return;
+    try {
+      final dir = Directory("$_appDir/images");
+      if (!await dir.exists()) await dir.create(recursive: true);
+      for (final item in _pendingImages) {
+        final p = item['path'] ?? "";
+        if (p.isEmpty) continue;
+        final ext = p.split('.').last.toLowerCase();
+        final dst =
+            File("${dir.path}/img_${DateTime.now().microsecondsSinceEpoch}.$ext");
+        await File(p).copy(dst.path);
+        item['saved'] = dst.path;
+      }
+    } catch (_) {}
+  }
+
+  bool get _hasPendingImage =>
+      _pendingImages.isNotEmpty || _pendingImageB64.isNotEmpty;
 
   void _exportAllSessions() {
     final b = StringBuffer();
@@ -3547,6 +3625,24 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
             ),
             ListTile(
               dense: true,
+              leading: const Icon(Icons.dns_outlined,
+                  size: 20, color: Colors.white54),
+              title: const Text("远程主机",
+                  style: TextStyle(color: Colors.white, fontSize: 14)),
+              subtitle: _remoteUrl.isEmpty
+                  ? null
+                  : Text(_remoteUrl,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: Colors.white38, fontSize: 11)),
+              onTap: () {
+                Navigator.pop(context);
+                _showRemoteHost();
+              },
+            ),
+            ListTile(
+              dense: true,
               leading: const Icon(Icons.bolt_outlined,
                   size: 20, color: Colors.white54),
               title: const Text("常用提示",
@@ -3934,23 +4030,29 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
                             : CrossAxisAlignment.start,
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          if (!isStream &&
-                              _msgs[i].imagePath != null &&
-                              File(_msgs[i].imagePath!).existsSync())
+                          if (!isStream && _msgs[i].images.isNotEmpty)
                             Padding(
                               padding: const EdgeInsets.only(bottom: 6),
-                              child: GestureDetector(
-                                onTap: () =>
-                                    _showImage(_msgs[i].imagePath!),
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(12),
-                                  child: Image.file(
-                                    File(_msgs[i].imagePath!),
-                                    width: 180,
-                                    height: 180,
-                                    fit: BoxFit.cover,
-                                  ),
-                                ),
+                              child: Wrap(
+                                spacing: 6,
+                                runSpacing: 6,
+                                children: [
+                                  for (final ip in _msgs[i].images)
+                                    if (File(ip).existsSync())
+                                      GestureDetector(
+                                        onTap: () => _showImage(ip),
+                                        child: ClipRRect(
+                                          borderRadius:
+                                              BorderRadius.circular(10),
+                                          child: Image.file(
+                                            File(ip),
+                                            width: 110,
+                                            height: 110,
+                                            fit: BoxFit.cover,
+                                          ),
+                                        ),
+                                      ),
+                                ],
                               ),
                             ),
                           if (!isStream && _msgs[i].kind == 3)
@@ -3982,7 +4084,7 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
                     child: CircularProgressIndicator(
                         strokeWidth: 2, color: Color(0xFF00FFCC))),
               ),
-            if (_pendingImageB64.isNotEmpty)
+            if (_hasPendingImage)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 2, 16, 2),
                 child: Row(
@@ -4001,6 +4103,7 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
                       onTap: () => setState(() {
                         _pendingImageB64 = "";
                         _pendingImageMime = "";
+                        _pendingImages.clear();
                       }),
                       child: const Icon(Icons.close,
                           size: 14, color: Colors.white38),
@@ -4083,7 +4186,7 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
                     builder: (ctx, v, _) {
                       final canSend = !_sending &&
                           (v.text.trim().isNotEmpty ||
-                              _pendingImageB64.isNotEmpty);
+                              _hasPendingImage);
                       if (_sending && v.text.trim().isEmpty) {
                         return IconButton(
                           tooltip: "停止回答",

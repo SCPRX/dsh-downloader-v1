@@ -68,6 +68,7 @@ class MainActivity : FlutterActivity() {
     private val workDir: File get() = envDir
 
     private var pendingPick: MethodChannel.Result? = null
+    private var pendingPicks: MethodChannel.Result? = null
     private var tts: TextToSpeech? = null
     private var speech: SpeechRecognizer? = null
     private var pendingVoice: MethodChannel.Result? = null
@@ -277,6 +278,19 @@ class MainActivity : FlutterActivity() {
                         result.error("RESET_FAIL", t.message, null)
                     }
                 }
+                "pickImages" -> {
+                    pendingPicks = result
+                    try {
+                        val i = Intent(Intent.ACTION_OPEN_DOCUMENT)
+                        i.addCategory(Intent.CATEGORY_OPENABLE)
+                        i.type = "image/*"
+                        i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                        startActivityForResult(i, 4243)
+                    } catch (t: Throwable) {
+                        pendingPicks = null
+                        result.error("PICK_FAIL", t.message, null)
+                    }
+                }
                 "pickImage" -> {
                     pendingPick = result
                     try {
@@ -343,6 +357,20 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun copyUriToCache(uri: android.net.Uri): String {
+        val mime = contentResolver.getType(uri) ?: "image/jpeg"
+        val ext = when {
+            mime.contains("png") -> "png"
+            mime.contains("webp") -> "webp"
+            else -> "jpg"
+        }
+        val f = File(cacheDir, "picked_" + System.currentTimeMillis() + "_" + (0..999).random() + "." + ext)
+        contentResolver.openInputStream(uri).use { input ->
+            if (input != null) f.outputStream().use { o -> input.copyTo(o) }
+        }
+        return f.absolutePath
+    }
+
     private fun beginVoice() {
         try {
             speech?.destroy()
@@ -405,6 +433,26 @@ class MainActivity : FlutterActivity() {
 
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode == 4243) {
+            val r = pendingPicks
+            pendingPicks = null
+            try {
+                val out = ArrayList<String>()
+                val clip = data?.clipData
+                if (clip != null) {
+                    for (i in 0 until minOf(clip.itemCount, 9)) {
+                        val uri = clip.getItemAt(i).uri
+                        out.add(copyUriToCache(uri))
+                    }
+                } else if (data?.data != null) {
+                    out.add(copyUriToCache(data.data!!))
+                }
+                r?.success(out)
+            } catch (t: Throwable) {
+                r?.error("PICK_FAIL", t.message, null)
+            }
+            return
+        }
         if (requestCode == 4242) {
             val r = pendingPick
             pendingPick = null
