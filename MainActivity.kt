@@ -581,7 +581,15 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    @Volatile
+    private var installingPayload = false
+
     private fun installPayloadAsync() {
+        if (installingPayload) {
+            logEngine("[payload] already installing, skip duplicate")
+            return
+        }
+        installingPayload = true
         Thread {
             val encFile = File(cacheDir, "payload.enc")
             val zipFile = File(cacheDir, "payload.zip")
@@ -693,6 +701,8 @@ class MainActivity : FlutterActivity() {
                 try { encFile.delete() } catch (_: Throwable) {}
                 try { zipFile.delete() } catch (_: Throwable) {}
                 notifyEvent("failed", "运行环境下载失败: " + t.message)
+            } finally {
+                installingPayload = false
             }
         }.start()
     }
@@ -955,7 +965,13 @@ class MainActivity : FlutterActivity() {
 
     private fun startSdk(apiKey: String) {
         if (!isEnvReady()) {
-            fail("环境还没装好")
+            fail(
+                "环境还没装好: proot=" + prootBin.exists() +
+                    " loader=" + loaderBin.exists() +
+                    " node=" + guestNode.exists() +
+                    " harness=" + guestHarness.exists() +
+                    " envDir=" + envDir.absolutePath
+            )
             return
         }
         killWeb()
