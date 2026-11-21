@@ -2,13 +2,8 @@ package com.dsh.dshapp
 
 import android.content.Intent
 import android.speech.tts.TextToSpeech
-import javax.crypto.Cipher
-import javax.crypto.spec.IvParameterSpec
-import javax.crypto.spec.SecretKeySpec
-import java.util.zip.ZipFile
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
-import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.os.Build
@@ -35,10 +30,6 @@ import java.util.zip.ZipInputStream
 class MainActivity : FlutterActivity() {
 
     companion object {
-        init {
-            System.loadLibrary("luchui")
-        }
-
         private const val CHANNEL = "com.dsh.dshapp/status"
         private const val BASE_PORT = 3090
         private const val MAX_TRIES = 20
@@ -120,6 +111,7 @@ class MainActivity : FlutterActivity() {
                     }
                 }
                 "readEngineLog" -> result.success(readEngineLog())
+                "hasBundledEnv" -> result.success(hasBundledEnv())
                 "speak" -> {
                     val text = call.argument<String>("text") ?: ""
                     try {
@@ -160,7 +152,7 @@ class MainActivity : FlutterActivity() {
                         var version = "unknown"
                         if (pkg.exists()) {
                             val txt = pkg.readText()
-                            val m = Regex("\"version\"\\s*:\\s*\"([^\"]+)\"").find(txt)
+                            val m = Regex("\"version\"\s*:\s*\"([^\"]+)\"").find(txt)
                             if (m != null) version = m.groupValues[1]
                         }
                         result.success(version)
@@ -303,10 +295,11 @@ class MainActivity : FlutterActivity() {
                         mainHandler.post { result.success(out) }
                     }.start()
                 }
-                "installPayload" -> {
-                    installPayloadAsync()
+                "installBundledEnv" -> {
+                    installBundledEnv()
                     result.success(true)
-                }                "startSdk" -> {
+                }
+                "startSdk" -> {
                     val apiKey = call.argument<String>("apiKey") ?: ""
                     startSdk(apiKey)
                     result.success(true)
@@ -530,203 +523,7 @@ class MainActivity : FlutterActivity() {
     private fun isEnvReady(): Boolean =
         prootBin.exists() && loaderBin.exists() && guestNode.exists() && guestHarness.exists()
 
-    private external fun nativeDeriveKey(sigHash: ByteArray): ByteArray
-
-    private external fun nativeDeriveIv(sigHash: ByteArray): ByteArray
-
-    private val payloadShaUrl: String =
-        "https://github.com/SCPRX/dsh-downloader-v1/releases/download/runtime/payload.enc.sha256"
-
-    private fun fetchExpectedSha256(): String {
-        return try {
-            val c = java.net.URL(payloadShaUrl).openConnection() as java.net.HttpURLConnection
-            c.instanceFollowRedirects = true
-            c.connectTimeout = 15000
-            c.readTimeout = 15000
-            c.setRequestProperty("User-Agent", "luchui")
-            if (c.responseCode != 200) return ""
-            c.inputStream.use { i ->
-                val txt = i.readBytes().toString(Charsets.UTF_8).trim()
-                txt.split(Regex("\\s+")).firstOrNull() ?: ""
-            }
-        } catch (t: Throwable) {
-            ""
-        }
-    }
-
-    private val payloadUrl: String =
-        "https://github.com/SCPRX/dsh-downloader-v1/releases/download/runtime/payload.enc"
-
-    private fun appSignatureHash(): ByteArray {
-        return try {
-            val pm = packageManager
-            val sigs = if (android.os.Build.VERSION.SDK_INT >= 28) {
-                val info = pm.getPackageInfo(
-                    packageName,
-                    android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES
-                )
-                info.signingInfo?.apkContentsSigners
-                    ?: info.signingInfo?.signingCertificateHistory
-            } else {
-                @Suppress("DEPRECATION")
-                pm.getPackageInfo(
-                    packageName,
-                    android.content.pm.PackageManager.GET_SIGNATURES
-                ).signatures
-            }
-            val md = java.security.MessageDigest.getInstance("SHA-256")
-            md.digest(sigs?.firstOrNull()?.toByteArray() ?: ByteArray(0))
-        } catch (t: Throwable) {
-            ByteArray(0)
-        }
-    }
-
-    @Volatile
-    private var installingPayload = false
-
-    private fun installPayloadAsync() {
-        if (installingPayload) {
-            logEngine("[payload] already installing, skip duplicate")
-            return
-        }
-        installingPayload = true
-        Thread {
-            val encFile = File(cacheDir, "payload.enc")
-            val zipFile = File(cacheDir, "payload.zip")
-            try {
-                val expected = fetchExpectedSha256()
-                var startAt = if (encFile.exists()) encFile.length() else 0L
-                status(if (startAt > 0) "继续下载运行环境…" else "正在下载运行环境…")
-                val conn = java.net.URL(payloadUrl).openConnection() as java.net.HttpURLConnection
-                conn.instanceFollowRedirects = true
-                conn.connectTimeout = 30000
-                conn.readTimeout = 600000
-                conn.setRequestProperty("User-Agent", "luchui")
-                if (startAt > 0) conn.setRequestProperty("Range", "bytes=" + startAt + "-")
-                val code = conn.responseCode
-                if (startAt > 0 && code != 206) {
-                    startAt = 0L
-                    encFile.delete()
-                }
-                val total = (if (code == 206) startAt + conn.contentLengthLong
-                             else conn.contentLengthLong)
-                var read = startAt
-                var lastTick = 0L
-                conn.inputStream.use { input ->
-                    java.io.FileOutputStream(encFile, startAt > 0).use { output ->
-                        val buf = ByteArray(256 * 1024)
-                        while (true) {
-                            val n = input.read(buf)
-                            if (n < 0) break
-                            output.write(buf, 0, n)
-                            read += n
-                            if (read - lastTick > 2L * 1024 * 1024) {
-                                lastTick = read
-                                val mb = read / 1024 / 1024
-                                val pct = if (total > 0) (read * 100 / total) else -1
-                                status(
-                                    if (pct >= 0) "正在下载运行环境 " + pct + "%"
-                                    else "正在下载运行环境 " + mb + "MB"
-                                )
-                            }
-                        }
-                    }
-                }
-                if (expected.isNotEmpty()) {
-                    status("正在校验运行环境…")
-                    val md = java.security.MessageDigest.getInstance("SHA-256")
-                    encFile.inputStream().use { i ->
-                        val buf = ByteArray(1024 * 1024)
-                        while (true) {
-                            val n = i.read(buf)
-                            if (n < 0) break
-                            md.update(buf, 0, n)
-                        }
-                    }
-                    val actual = md.digest().joinToString("") { "%02x".format(it) }
-                    if (!actual.equals(expected, ignoreCase = true)) {
-                        encFile.delete()
-                        throw IllegalStateException("运行环境校验失败，请重试")
-                    }
-                }
-                status("正在解密运行环境…")
-                val sigHash = appSignatureHash()
-                val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
-                cipher.init(
-                    Cipher.DECRYPT_MODE,
-                    SecretKeySpec(nativeDeriveKey(sigHash), "AES"),
-                    IvParameterSpec(nativeDeriveIv(sigHash))
-                )
-                encFile.inputStream().use { input ->
-                    zipFile.outputStream().use { output ->
-                        val buf = ByteArray(1024 * 1024)
-                        while (true) {
-                            val n = input.read(buf)
-                            if (n < 0) break
-                            val out = cipher.update(buf, 0, n)
-                            if (out != null) output.write(out)
-                        }
-                        val tail = cipher.doFinal()
-                        if (tail != null) output.write(tail)
-                    }
-                }
-                encFile.delete()
-                status("正在解包运行环境…")
-                val patchDir = File(cacheDir, "patches")
-                patchDir.mkdirs()
-                val runtimeZip = File(cacheDir, "runtime.zip")
-                ZipFile(zipFile).use { zf ->
-                    for (e in zf.entries()) {
-                        val name = e.name
-                        if (name == "runtime.zip") {
-                            zf.getInputStream(e).use { i ->
-                                runtimeZip.outputStream().use { o ->
-                                    i.copyTo(o, 256 * 1024)
-                                }
-                            }
-                        } else if (name.startsWith("patches/") && !e.isDirectory) {
-                            val dest = File(patchDir, name.removePrefix("patches/"))
-                            zf.getInputStream(e).use { i ->
-                                dest.outputStream().use { o ->
-                                    i.copyTo(o, 256 * 1024)
-                                }
-                            }
-                        }
-                    }
-                }
-                zipFile.delete()
-                extractEnv(runtimeZip)
-            } catch (t: Throwable) {
-                logEngine("[payload] fail: " + t.message)
-                try { encFile.delete() } catch (_: Throwable) {}
-                try { zipFile.delete() } catch (_: Throwable) {}
-                notifyEvent("failed", "运行环境下载失败: " + t.message)
-            } finally {
-                installingPayload = false
-            }
-        }.start()
-    }
-
-    private fun applyPatchesFromDir(dir: File) {
-        val pats = listOf(
-            "dsh-session-persistence-jsonl__index.js" to
-                "rootfs/opt/dsh/node_modules/@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js",
-            "dsh-attachment-local__index.js" to
-                "rootfs/opt/dsh/node_modules/@deepseek-ai/dsh-attachment-local/lib/index.js"
-        )
-        for ((name, destRel) in pats) {
-            try {
-                val src = File(dir, name)
-                if (!src.exists()) continue
-                val dest = File(envDir, destRel)
-                if (!dest.parentFile.exists()) continue
-                src.copyTo(dest, overwrite = true)
-                logEngine("[patch] " + destRel)
-            } catch (t: Throwable) {
-                logEngine("[patch] skip " + destRel + ": " + t.message)
-            }
-        }
-    }    private fun runShell(cmd: String): String {
+    private fun runShell(cmd: String): String {
         if (!isEnvReady()) return "环境还没装好"
         return try {
             val safe = cmd.replace("'", "'\\''")
@@ -773,6 +570,37 @@ class MainActivity : FlutterActivity() {
         } catch (t: Throwable) {
             "执行失败: " + t.message
         }
+    }
+
+    private fun hasBundledEnv(): Boolean = try {
+        assets.open("runtime.zip").use { true }
+    } catch (_: Throwable) {
+        false
+    }
+
+    private fun installBundledEnv() {
+        Thread {
+            try {
+                val zip = File(cacheDir, "env_data.zip")
+                status("正在安装内置环境…")
+                assets.open("runtime.zip").use { input ->
+                    FileOutputStream(zip).use { out ->
+                        val buf = ByteArray(256 * 1024)
+                        var n = input.read(buf)
+                        var total = 0L
+                        while (n > 0) {
+                            out.write(buf, 0, n)
+                            total += n
+                            n = input.read(buf)
+                        }
+                        logEngine("[bundle] copied " + total + " bytes")
+                    }
+                }
+                extractEnv(zip)
+            } catch (t: Throwable) {
+                fail("内置环境安装失败: " + t.message)
+            }
+        }.start()
     }
 
     private fun extractEnv(zipFile: File) {
@@ -878,9 +706,7 @@ class MainActivity : FlutterActivity() {
                     for ((path, target) in linkCandidates) {
                         try {
                             val f = File(path)
-                            if (f.exists()) {
-                                if (f.length() in 1L..300L) f.delete() else continue
-                            }
+                            if (f.exists()) continue
                             val t = File(f.parentFile, target)
                             if (!t.exists()) continue
                             java.nio.file.Files.createSymbolicLink(
@@ -902,7 +728,6 @@ class MainActivity : FlutterActivity() {
                 }
                 status("解压完成，共 $count 个文件，恢复 $links 个链接")
                 logEngine("[env] extract done, $count files, $links links")
-                applyPatchesFromDir(File(cacheDir, "patches"))
                 zipFile.delete()
                 notifyEvent("envReady", null)
             } catch (t: Throwable) {
@@ -965,13 +790,7 @@ class MainActivity : FlutterActivity() {
 
     private fun startSdk(apiKey: String) {
         if (!isEnvReady()) {
-            fail(
-                "环境还没装好: proot=" + prootBin.exists() +
-                    " loader=" + loaderBin.exists() +
-                    " node=" + guestNode.exists() +
-                    " harness=" + guestHarness.exists() +
-                    " envDir=" + envDir.absolutePath
-            )
+            fail("环境还没装好")
             return
         }
         killWeb()

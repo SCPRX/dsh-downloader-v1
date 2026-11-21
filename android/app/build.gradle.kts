@@ -54,25 +54,12 @@ android {
         }
     }
 
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
-        }
-    }
-
     buildTypes {
         release {
             signingConfig = if (System.getenv("RELEASE_KEYSTORE_PATH") != null)
                 signingConfigs.getByName("release")
             else
                 signingConfigs.getByName("debug")
-            isMinifyEnabled = true
-            isShrinkResources = true
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
         }
     }
 }
@@ -86,6 +73,43 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+
+// 把运行时包内置进 APK 的 assets（首次打开免下载）
+val runtimeMirrors = listOf(
+    "https://ghfast.top/https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/apk.zip",
+    "https://gh-proxy.com/https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/apk.zip",
+    "https://github.com/SCPRX/dsh-downloader-v1/releases/download/v1/apk.zip"
+)
+val bundleRuntime = tasks.register("bundleRuntime") {
+    val out = File(projectDir, "src/main/assets/runtime.zip")
+    outputs.file(out)
+    doLast {
+        if (out.exists() && out.length() > 100_000_000L) {
+            println("runtime already bundled: " + out.length())
+            return@doLast
+        }
+        out.parentFile.mkdirs()
+        var ok = false
+        for (u in runtimeMirrors) {
+            try {
+                println("fetch runtime: " + u)
+                val conn: URLConnection = URI(u).toURL().openConnection()
+                conn.connectTimeout = 30000
+                conn.readTimeout = 300000
+                conn.getInputStream().use { input ->
+                    out.outputStream().use { o -> input.copyTo(o, 256 * 1024) }
+                }
+                if (out.length() > 100_000_000L) { ok = true; break }
+            } catch (e: Throwable) {
+                println("fetch failed: " + e.message)
+            }
+        }
+        if (!ok) throw GradleException("runtime download failed")
+        println("runtime bundled: " + out.length())
+    }
+}
+tasks.named("preBuild") { dependsOn(bundleRuntime) }
 
 android {
     lint {

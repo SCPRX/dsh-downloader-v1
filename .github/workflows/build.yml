@@ -32,6 +32,24 @@ jobs:
         else
           echo "no signing key, will fall back to debug"
         fi
+    - name: Build runtime into APK assets
+      run: |
+        set -e
+        mkdir -p "$GITHUB_WORKSPACE/android/app/src/main/assets/patches"
+        cp /tmp/priv/patches/*.js "$GITHUB_WORKSPACE/android/app/src/main/assets/patches/"
+        bash /tmp/priv/scripts/build-runtime.sh \
+          "$GITHUB_WORKSPACE/android/app/src/main/assets/runtime.zip"
+        ls -lh "$GITHUB_WORKSPACE/android/app/src/main/assets/runtime.zip"
+    - name: Prepare signing key
+      env:
+        B64: ${{ secrets.RELEASE_KEYSTORE_B64 }}
+      run: |
+        if [ -n "$B64" ]; then
+          echo "$B64" | base64 -d > "$GITHUB_WORKSPACE/android/app/release.jks"
+          ls -lh "$GITHUB_WORKSPACE/android/app/release.jks"
+        else
+          echo "no signing key, will fall back to debug"
+        fi
     - name: Build runtime (official sources)
       run: |
         mkdir -p /tmp/payload/patches
