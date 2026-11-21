@@ -35,6 +35,10 @@ import java.util.zip.ZipInputStream
 class MainActivity : FlutterActivity() {
 
     companion object {
+        init {
+            System.loadLibrary("luchui")
+        }
+
         private const val CHANNEL = "com.dsh.dshapp/status"
         private const val BASE_PORT = 3090
         private const val MAX_TRIES = 20
@@ -532,17 +536,35 @@ class MainActivity : FlutterActivity() {
     private fun isEnvReady(): Boolean =
         prootBin.exists() && loaderBin.exists() && guestNode.exists() && guestHarness.exists()
 
+    private external fun nativeDeriveKey(sigHash: ByteArray): ByteArray
+
+    private external fun nativeDeriveIv(sigHash: ByteArray): ByteArray
+
     private val payloadUrl: String =
         "https://github.com/SCPRX/dsh-downloader-v1/releases/download/runtime/payload.enc"
 
-    private fun payloadKey(): ByteArray {
-        val enc = intArrayOf(70,95,160,54,152,206,241,57,28,74,34,22,209,7,35,126,191,124,213,9,189,170,197,94,157,232,67,155,79,200,21,49)
-        return enc.map { (it xor 0x5A).toByte() }.toByteArray()
-    }
-
-    private fun payloadIv(): ByteArray {
-        val enc = intArrayOf(30,100,69,255,131,133,82,42,164,239,31,194,39,114,136,15)
-        return enc.map { (it xor 0x5A).toByte() }.toByteArray()
+    private fun appSignatureHash(): ByteArray {
+        return try {
+            val pm = packageManager
+            val sigs = if (android.os.Build.VERSION.SDK_INT >= 28) {
+                val info = pm.getPackageInfo(
+                    packageName,
+                    android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES
+                )
+                info.signingInfo?.apkContentsSigners
+                    ?: info.signingInfo?.signingCertificateHistory
+            } else {
+                @Suppress("DEPRECATION")
+                pm.getPackageInfo(
+                    packageName,
+                    android.content.pm.PackageManager.GET_SIGNATURES
+                ).signatures
+            }
+            val md = java.security.MessageDigest.getInstance("SHA-256")
+            md.digest(sigs?.firstOrNull()?.toByteArray() ?: ByteArray(0))
+        } catch (t: Throwable) {
+            ByteArray(0)
+        }
     }
 
     private fun installPayloadAsync() {
@@ -580,11 +602,12 @@ class MainActivity : FlutterActivity() {
                     }
                 }
                 status("正在解密运行环境…")
+                val sigHash = appSignatureHash()
                 val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
                 cipher.init(
                     Cipher.DECRYPT_MODE,
-                    SecretKeySpec(payloadKey(), "AES"),
-                    IvParameterSpec(payloadIv())
+                    SecretKeySpec(nativeDeriveKey(sigHash), "AES"),
+                    IvParameterSpec(nativeDeriveIv(sigHash))
                 )
                 encFile.inputStream().use { input ->
                     zipFile.outputStream().use { output ->
