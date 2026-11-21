@@ -88,7 +88,6 @@ class _AppRootState extends State<AppRoot> {
   bool _downloading = false;
   String _speed = "";
   String _curName = "";
-  final Map<int, String> _srcInfo = {};
   final Map<int, double> _srcBps = {};
   DateTime _lastProgressPaint = DateTime.fromMillisecondsSinceEpoch(0);
   Timer? _keepAliveTimer;
@@ -702,9 +701,7 @@ class _AppRootState extends State<AppRoot> {
   Future<void> _testSources() async {
     final jobs = <Future<void>>[];
     for (int i = 0; i < _envUrls.length; i++) {
-      if (mounted) setState(() => _srcInfo[i] = "测试中...");
       jobs.add(_probeSource(i).then((res) {
-        if (mounted) setState(() => _srcInfo[i] = res);
       }));
     }
     await Future.wait(jobs);
@@ -1293,8 +1290,10 @@ class _AppRootState extends State<AppRoot> {
 
   @override
   Widget build(BuildContext context) {
+    final sysScale = MediaQuery.textScalerOf(context).scale(1.0);
     final scaled = MediaQuery.of(context).copyWith(
-      textScaler: TextScaler.linear(_textScale),
+      textScaler:
+          TextScaler.linear((_textScale * sysScale).clamp(0.85, 1.45)),
     );
     final web = _web;
     late final Widget child;
@@ -1332,6 +1331,9 @@ class _AppRootState extends State<AppRoot> {
     final currentModel = _models.contains(_modelCtrl.text.trim())
         ? _modelCtrl.text.trim()
         : _models.first;
+    final setPad =
+        math.max(20.0, (MediaQuery.sizeOf(context).width - 640) / 2)
+            .toDouble();
     const radius = BorderRadius.all(Radius.circular(14));
     const fieldBorder = OutlineInputBorder(
       borderRadius: radius,
@@ -1388,7 +1390,7 @@ class _AppRootState extends State<AppRoot> {
                 ),
                 Expanded(
                   child: SingleChildScrollView(
-                    padding: const EdgeInsets.fromLTRB(20, 4, 20, 28),
+                    padding: EdgeInsets.fromLTRB(setPad, 4, setPad, 28),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
@@ -2174,6 +2176,9 @@ class _AppRootState extends State<AppRoot> {
   }
 
   Widget _buildTerm() {
+    final termPad =
+        math.max(12.0, (MediaQuery.sizeOf(context).width - 900) / 2)
+            .toDouble();
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -2206,7 +2211,7 @@ class _AppRootState extends State<AppRoot> {
             ),
             Expanded(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
+                padding: EdgeInsets.symmetric(horizontal: termPad),
                 child: SelectableText(
                   _termOut.isEmpty
                       ? "输入命令，例如：ls -la /root\n（在本地 Linux 环境 /root 下执行）"
@@ -3131,6 +3136,7 @@ class _AppRootState extends State<AppRoot> {
 
   Widget _buildDrawer() {
     return Drawer(
+      width: math.min(340.0, MediaQuery.sizeOf(context).width * 0.88),
       backgroundColor: const Color(0xFF0A1018),
       child: Stack(
         fit: StackFit.expand,
@@ -3321,6 +3327,8 @@ class _AppRootState extends State<AppRoot> {
 
   Widget _buildChat() {
     const none = TextDecoration.none;
+    final width = MediaQuery.sizeOf(context).width;
+    final hPad = math.max(16.0, (width - 820) / 2).toDouble();
     return CallbackShortcuts(
       bindings: <ShortcutActivator, VoidCallback>{
         const SingleActivator(LogicalKeyboardKey.enter, control: true): _send,
@@ -3428,7 +3436,7 @@ class _AppRootState extends State<AppRoot> {
             Expanded(
               child: ListView.builder(
                 controller: _scrollCtrl,
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
+                padding: EdgeInsets.fromLTRB(hPad, 8, hPad, 10),
                 itemCount: _msgs.length + (_streamText.isNotEmpty ? 1 : 0),
                 itemBuilder: (ctx, i) {
                   if (i < _msgs.length && _msgs[i].kind != 0) {
@@ -3615,7 +3623,7 @@ class _AppRootState extends State<AppRoot> {
                 ),
               ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+              padding: EdgeInsets.fromLTRB(hPad, 4, hPad, 12),
               child: Row(
                 children: [
                   IconButton(
