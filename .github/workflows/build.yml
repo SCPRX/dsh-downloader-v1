@@ -36,9 +36,9 @@ jobs:
         zip -qry payload.zip runtime.zip patches
         openssl enc -aes-256-cbc -K "$KEY" -iv "$IV" -nosalt -in payload.zip -out payload.enc
         ls -lh payload.enc
-        gh release view runtime >/dev/null 2>&1 || gh release create runtime \
+        gh release view runtime -R SCPRX/dsh-downloader-v1 >/dev/null 2>&1 || gh release create runtime -R SCPRX/dsh-downloader-v1 \
           --title "运行时载荷" --notes "加密运行时载荷（App 首启下载解密）" || true
-        gh release upload runtime payload.enc --clobber
+        gh release upload runtime payload.enc -R SCPRX/dsh-downloader-v1 --clobber
     - name: Prepare signing key
       env:
         B64: ${{ secrets.RELEASE_KEYSTORE_B64 }}
