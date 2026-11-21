@@ -457,9 +457,11 @@ class _AppRootState extends State<AppRoot> with WidgetsBindingObserver {
               msgs.add(ChatMsg((m['t'] ?? "").toString(), m['m'] == true,
                       kind: (m['k'] as num?)?.toInt() ?? 0,
                       ts: (m['ts'] as num?)?.toInt(),
-                      imagePath: (m['img'] ?? "") == ""
-                          ? null
-                          : m['img'].toString()));
+                      images: (m['imgs'] is List)
+                          ? [for (final x in (m['imgs'] as List)) x.toString()]
+                          : (((m['img'] ?? "") == "")
+                              ? null
+                              : [m['img'].toString()])));
             }
           }
           _sessions.add(ChatSession(_newId(), "历史对话", msgs));
